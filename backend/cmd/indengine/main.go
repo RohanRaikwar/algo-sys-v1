@@ -211,6 +211,16 @@ func main() {
 	// ---- Step 7: Start indicator processing goroutine ----
 	// Processes candles and batches all indicator results into a single Redis pipeline
 	go func() {
+		const (
+			indicatorLatencyKey           = "metrics:indengine:indicator_compute_ms"
+			indicatorLatencyTTL           = 30 * time.Second
+			indicatorLatencyPublishMinDur = 2 * time.Second
+			indicatorLatencyAlpha         = 0.2
+		)
+		var (
+			latencyEwmaMs      float64
+			lastLatencyPublish time.Time
+		)
 		for {
 			select {
 			case <-ctx.Done():
@@ -221,21 +231,37 @@ func main() {
 				}
 
 				var results []model.IndicatorResult
+				start := time.Now()
 				if tfc.Forming {
 					// Live preview — Peek without mutating state
 					results = engine.ProcessPeek(tfc)
-					log.Printf("[debug] forming candle TF=%ds %s:%s close=%d → %d results",
-						tfc.TF, tfc.Exchange, tfc.Token, tfc.Close, len(results))
 				} else {
 					// Completed candle — Update state
 					results = engine.Process(tfc)
 				}
-
-				for _, r := range results {
-					if r.Ready && !r.Live {
-						log.Printf("[indicator] %s TF=%ds %s:%s = %.4f",
-							r.Name, r.TF, r.Exchange, r.Token, r.Value)
+				elapsed := time.Since(start)
+				prom.IndicatorComputeDur.Observe(elapsed.Seconds())
+				if len(results) > 0 {
+					prom.IndicatorsTotal.Add(float64(len(results)))
+				}
+				latencyMs := float64(elapsed.Microseconds()) / 1000.0
+				if latencyEwmaMs == 0 {
+					latencyEwmaMs = latencyMs
+				} else {
+					latencyEwmaMs = latencyEwmaMs*(1.0-indicatorLatencyAlpha) + latencyMs*indicatorLatencyAlpha
+				}
+				if time.Since(lastLatencyPublish) >= indicatorLatencyPublishMinDur {
+					cctx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
+					if cctx.Err() == nil {
+						_ = redisWriter.Client().Set(
+							cctx,
+							indicatorLatencyKey,
+							fmt.Sprintf("%.3f", latencyEwmaMs),
+							indicatorLatencyTTL,
+						).Err()
 					}
+					cancel()
+					lastLatencyPublish = time.Now()
 				}
 
 				// Batch all results into a single Redis pipeline (1 roundtrip)

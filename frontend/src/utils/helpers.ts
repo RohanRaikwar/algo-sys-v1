@@ -2,6 +2,7 @@
 
 export const SMA_PALETTE = ['#6366f1', '#8b5cf6', '#a78bfa', '#c4b5fd', '#7c3aed', '#4f46e5', '#4338ca'];
 export const EMA_PALETTE = ['#06b6d4', '#22d3ee', '#67e8f9', '#0891b2', '#0e7490', '#155e75', '#164e63'];
+export const SMMA_PALETTE = ['#10b981', '#34d399', '#6ee7b7', '#059669', '#047857', '#065f46', '#064e3b'];
 
 export const IND_COLORS: Record<string, string> = {
     'SMA_9': '#6366f1',
@@ -14,6 +15,10 @@ export const IND_COLORS: Record<string, string> = {
     'EMA_50': '#67e8f9',
     'EMA_100': '#0891b2',
     'EMA_200': '#0e7490',
+    'SMMA_20': '#10b981',
+    'SMMA_50': '#34d399',
+    'SMMA_100': '#6ee7b7',
+    'SMMA_200': '#059669',
     'RSI_14': '#f59e0b',
 };
 
@@ -26,6 +31,10 @@ export function getIndColor(name: string): string {
     if (name.startsWith('EMA')) {
         const idx = Object.keys(IND_COLORS).filter(k => k.startsWith('EMA')).length;
         return EMA_PALETTE[idx % EMA_PALETTE.length];
+    }
+    if (name.startsWith('SMMA')) {
+        const idx = Object.keys(IND_COLORS).filter(k => k.startsWith('SMMA')).length;
+        return SMMA_PALETTE[idx % SMMA_PALETTE.length];
     }
     return '#6366f1';
 }
@@ -84,7 +93,7 @@ export function parseChannel(ch: string) {
 
 // Constants
 export const CHART_MAX = 1000;
-export const FETCH_SIZE = 50;
-export const CANDLE_MAX = 50;
+export const FETCH_SIZE = 500;
+export const CANDLE_MAX = 1000;
 export const RECONNECT_BASE = 1000;
 export const RECONNECT_MAX = 10000;

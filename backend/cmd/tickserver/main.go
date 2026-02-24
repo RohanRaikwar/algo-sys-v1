@@ -40,9 +40,10 @@ type tickMsg struct {
 
 // instrument holds per-symbol simulation state.
 type instrument struct {
-	Token    string
-	Exchange string
-	Price    int64 // current simulated price in paise
+	Token     string
+	Exchange  string
+	Price     int64 // current simulated price in paise
+	BasePrice int64 // anchor price for mean-reversion
 }
 
 // ─── Hub ──────────────────────────────────────────────────────────────────────
@@ -118,13 +119,21 @@ func wsHandler(h *hub) http.HandlerFunc {
 
 // ─── Tick generator ──────────────────────────────────────────────────────────
 
-// walkPrice applies a tiny random walk (±0.1%) to simulate price movement.
-func walkPrice(price int64) int64 {
-	// Change ±0.0% to ±0.1% each tick
-	pct := (rand.Float64()*0.2 - 0.1) / 100.0
-	delta := int64(float64(price) * pct)
+// walkPrice applies a tiny random walk with strong mean-reversion to simulate
+// realistic index price movement. Keeps prices within a tight band around the
+// base price, producing clean indicator overlay with minimal lag.
+func walkPrice(price, basePrice int64) int64 {
+	// Random component: ±0.005% per tick (very small noise)
+	pct := (rand.Float64()*0.01 - 0.005) / 100.0
+
+	// Strong mean-reversion: pull 0.1% of deviation back toward base
+	deviation := float64(price-basePrice) / float64(basePrice)
+	reversion := -deviation * 0.001
+
+	totalPct := pct + reversion
+	delta := int64(float64(price) * totalPct)
 	newPrice := price + delta
-	if newPrice < 100 { // floor at 1 paise
+	if newPrice < 100 {
 		newPrice = 100
 	}
 	return newPrice
@@ -139,7 +148,7 @@ func runGenerator(h *hub, instruments []instrument, intervalMs int) {
 
 	for range ticker.C {
 		for i := range instruments {
-			instruments[i].Price = walkPrice(instruments[i].Price)
+			instruments[i].Price = walkPrice(instruments[i].Price, instruments[i].BasePrice)
 			msg := tickMsg{
 				Token:    instruments[i].Token,
 				Exchange: instruments[i].Exchange,
@@ -217,9 +226,10 @@ func parseInstruments(s string) []instrument {
 			price = 100000_00 // default ₹1000.00
 		}
 		result = append(result, instrument{
-			Token:    token,
-			Exchange: exchange,
-			Price:    price,
+			Token:     token,
+			Exchange:  exchange,
+			Price:     price,
+			BasePrice: price,
 		})
 	}
 	return result

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAppStore } from '../../store/useAppStore';
 import { saveActiveConfig } from '../../services/api';
-import { tfLabel, getIndColor, SMA_PALETTE, EMA_PALETTE, getEntryColor } from '../../utils/helpers';
+import { tfLabel, getIndColor, SMA_PALETTE, EMA_PALETTE, SMMA_PALETTE, getEntryColor } from '../../utils/helpers';
 import type { IndicatorEntry } from '../../types/api';
 import styles from './Settings.module.css';
 
@@ -45,7 +45,7 @@ export function SettingsModal({ open, onClose }: Props) {
         if (exists) return;
         setDraft((d) => [...d, { name, tf: tfAdd, color }]);
         setPeriod('');
-        const palettes = [...SMA_PALETTE, ...EMA_PALETTE];
+        const palettes = [...SMA_PALETTE, ...EMA_PALETTE, ...SMMA_PALETTE];
         setColor(palettes[(draft.length + 1) % palettes.length]);
     }, [indType, period, tfAdd, color, draft]);
 
@@ -91,7 +91,13 @@ export function SettingsModal({ open, onClose }: Props) {
                         </div>
                         <div className={styles.pillList}>
                             {sorted.map((entry, idx) => {
-                                const type = entry.name.startsWith('SMA') ? styles.pillSma : entry.name.startsWith('EMA') ? styles.pillEma : '';
+                                const type = entry.name.startsWith('SMA')
+                                    ? styles.pillSma
+                                    : entry.name.startsWith('EMA')
+                                        ? styles.pillEma
+                                        : entry.name.startsWith('SMMA')
+                                            ? styles.pillSmma
+                                            : '';
                                 const dotColor = getEntryColor(entry);
                                 const realIdx = draft.indexOf(entry);
                                 return (
@@ -114,6 +120,7 @@ export function SettingsModal({ open, onClose }: Props) {
                             <select className={styles.input} style={{ width: 85 }} value={indType} onChange={(e) => setIndType(e.target.value)}>
                                 <option value="SMA">SMA</option>
                                 <option value="EMA">EMA</option>
+                                <option value="SMMA">SMMA</option>
                             </select>
                             <input
                                 className={styles.input}

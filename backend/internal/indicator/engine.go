@@ -8,7 +8,7 @@ import (
 
 // IndicatorConfig specifies a single indicator to compute.
 type IndicatorConfig struct {
-	Type   string // "SMA", "EMA", "RSI"
+	Type   string // "SMA", "EMA", "SMMA", "RSI"
 	Period int
 }
 
@@ -31,32 +31,32 @@ type Engine struct {
 
 	// state[tfIdx][tokenKey] → *tokenIndicators
 	state []map[string]*tokenIndicators
+
+	// tfIndex maps TF seconds → index in configs/state for O(1) lookup
+	tfIndex map[int]int
 }
 
 // NewEngine creates an indicator engine with the given per-TF indicator configs.
 func NewEngine(configs []TFIndicatorConfig) *Engine {
 	state := make([]map[string]*tokenIndicators, len(configs))
+	tfIndex := make(map[int]int, len(configs))
 	for i := range state {
 		state[i] = make(map[string]*tokenIndicators, 64)
+		tfIndex[configs[i].TF] = i
 	}
 	return &Engine{
 		configs: configs,
 		state:   state,
+		tfIndex: tfIndex,
 	}
 }
 
 // Process takes a finalized TF candle and computes all indicators for that TF + token.
 // Returns indicator results (may include not-ready indicators with Ready=false).
 func (e *Engine) Process(tfc model.TFCandle) []model.IndicatorResult {
-	// Find the matching TF index
-	tfIdx := -1
-	for i, cfg := range e.configs {
-		if cfg.TF == tfc.TF {
-			tfIdx = i
-			break
-		}
-	}
-	if tfIdx == -1 {
+	// O(1) TF lookup via index map
+	tfIdx, ok := e.tfIndex[tfc.TF]
+	if !ok {
 		return nil // TF not configured for indicators
 	}
 
@@ -103,15 +103,9 @@ func (e *Engine) Process(tfc model.TFCandle) []model.IndicatorResult {
 // Does NOT mutate indicator state — safe for streaming updates every second.
 // Returns nil if token hasn't been seen before (need at least one Process first).
 func (e *Engine) ProcessPeek(tfc model.TFCandle) []model.IndicatorResult {
-	// Find the matching TF index
-	tfIdx := -1
-	for i, cfg := range e.configs {
-		if cfg.TF == tfc.TF {
-			tfIdx = i
-			break
-		}
-	}
-	if tfIdx == -1 {
+	// O(1) TF lookup via index map
+	tfIdx, ok := e.tfIndex[tfc.TF]
+	if !ok {
 		return nil
 	}
 
@@ -175,6 +169,8 @@ func (e *Engine) createTokenIndicators(tfIdx int) *tokenIndicators {
 			inds[i] = NewSMA(ic.Period)
 		case "EMA":
 			inds[i] = NewEMA(ic.Period)
+		case "SMMA":
+			inds[i] = NewSMMA(ic.Period)
 		case "RSI":
 			inds[i] = NewRSI(ic.Period)
 		default:

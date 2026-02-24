@@ -45,6 +45,12 @@ func (e *Engine) ReloadConfigs(newConfigs []TFIndicatorConfig) (preserved, creat
 	e.configs = newConfigs
 	e.state = newState
 
+	// Rebuild TF index for O(1) lookup
+	e.tfIndex = make(map[int]int, len(newConfigs))
+	for i, cfg := range newConfigs {
+		e.tfIndex[cfg.TF] = i
+	}
+
 	log.Printf("[reload] ✅ config reloaded: %d configs, %d preserved, %d new",
 		len(newConfigs), preserved, created)
 
@@ -94,7 +100,7 @@ func ValidateConfigs(configs []TFIndicatorConfig) error {
 
 		for _, ind := range cfg.Indicators {
 			switch ind.Type {
-			case "SMA", "EMA", "RSI":
+			case "SMA", "EMA", "SMMA", "RSI":
 				// valid
 			default:
 				return fmt.Errorf("unknown indicator type %q for TF=%d", ind.Type, cfg.TF)

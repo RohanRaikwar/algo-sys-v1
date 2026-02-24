@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"time"
+	"unsafe"
 
 	"trading-systemv1/internal/model"
 
@@ -84,6 +85,7 @@ func (w *Writer) RunTFCandles(ctx context.Context, tfCandleCh <-chan model.TFCan
 
 // RunFormingTFCandles publishes forming TF candles via PubSub ONLY (no XADD).
 // Used for live/streaming indicator peek updates every second.
+// OPTIMIZED: uses string concat instead of fmt.Sprintf.
 func (w *Writer) RunFormingTFCandles(ctx context.Context, ch <-chan model.TFCandle) {
 	for {
 		select {
@@ -93,8 +95,9 @@ func (w *Writer) RunFormingTFCandles(ctx context.Context, ch <-chan model.TFCand
 			if !ok {
 				return
 			}
-			jsonData := string(tfc.JSON())
-			pubsubCh := fmt.Sprintf("pub:candle:%ds:%s:%s", tfc.TF, tfc.Exchange, tfc.Token)
+			jsonBytes := tfc.JSON()
+			jsonData := *(*string)(unsafe.Pointer(&jsonBytes))
+			pubsubCh := "pub:candle:" + itoa(tfc.TF) + "s:" + tfc.Exchange + ":" + tfc.Token
 			w.client.Publish(ctx, pubsubCh, jsonData)
 		}
 	}
@@ -118,19 +121,23 @@ func (w *Writer) RunIndicators(ctx context.Context, indCh <-chan model.Indicator
 
 // WriteIndicatorBatch writes multiple indicator results in a single Redis pipeline.
 // This batches XADD + SET + PUBLISH for all results into one network roundtrip.
+// Optimized: uses pre-built channel names, []byte→string zero-copy, no fmt.Sprintf.
 func (w *Writer) WriteIndicatorBatch(ctx context.Context, results []model.IndicatorResult) {
 	if len(results) == 0 {
 		return
 	}
 
 	pipe := w.client.Pipeline()
-	for _, ind := range results {
+	for i := range results {
+		ind := &results[i]
 		if !ind.Ready && !ind.Live {
 			continue
 		}
 
-		jsonData := string(ind.JSON())
-		pubsubCh := fmt.Sprintf("pub:ind:%s:%ds:%s:%s", ind.Name, ind.TF, ind.Exchange, ind.Token)
+		jsonBytes := ind.JSON()
+		// Zero-copy []byte→string (safe: jsonBytes is not mutated after this)
+		jsonData := *(*string)(unsafe.Pointer(&jsonBytes))
+		pubsubCh := ind.PubSubChannel()
 
 		if ind.Live {
 			pipe.Publish(ctx, pubsubCh, jsonData)
@@ -149,7 +156,7 @@ func (w *Writer) WriteIndicatorBatch(ctx context.Context, results []model.Indica
 			Approx: true,
 			Values: map[string]interface{}{"data": jsonData},
 		})
-		latestKey := fmt.Sprintf("ind:%s:%ds:latest:%s:%s", ind.Name, ind.TF, ind.Exchange, ind.Token)
+		latestKey := "ind:" + ind.Name + ":" + itoa(ind.TF) + "s:latest:" + ind.Exchange + ":" + ind.Token
 		pipe.Set(ctx, latestKey, jsonData, defaultLatestTTL)
 		pipe.Publish(ctx, pubsubCh, jsonData)
 	}
@@ -279,8 +286,9 @@ func (w *Writer) writeIndicator(ctx context.Context, ind model.IndicatorResult) 
 		return // skip not-ready confirmed indicators
 	}
 
-	jsonData := string(ind.JSON())
-	pubsubCh := fmt.Sprintf("pub:ind:%s:%ds:%s:%s", ind.Name, ind.TF, ind.Exchange, ind.Token)
+	jsonBytes := ind.JSON()
+	jsonData := *(*string)(unsafe.Pointer(&jsonBytes))
+	pubsubCh := ind.PubSubChannel()
 
 	if ind.Live {
 		// Live/preview results: PubSub only (no XADD streams, no SET latest)
@@ -307,7 +315,7 @@ func (w *Writer) writeIndicator(ctx context.Context, ind model.IndicatorResult) 
 	})
 
 	// SET latest indicator value
-	latestKey := fmt.Sprintf("ind:%s:%ds:latest:%s:%s", ind.Name, ind.TF, ind.Exchange, ind.Token)
+	latestKey := "ind:" + ind.Name + ":" + itoa(ind.TF) + "s:latest:" + ind.Exchange + ":" + ind.Token
 	pipe.Set(ctx, latestKey, jsonData, defaultLatestTTL)
 
 	// PUBLISH for real-time subscribers (dashboard)

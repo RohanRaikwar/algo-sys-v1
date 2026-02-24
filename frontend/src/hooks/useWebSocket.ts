@@ -53,79 +53,87 @@ export function useWebSocket() {
             };
 
             ws.onmessage = (evt) => {
-                incrementMsg();
-                try {
-                    const envelope: WSEnvelope = JSON.parse(evt.data);
-                    if (envelope.ts) {
-                        setLastMsgTS(envelope.ts);
-                        setLastUpdateTime(fmtTime(envelope.ts));
-                        const serverMs = new Date(envelope.ts).getTime();
-                        const lat = Date.now() - serverMs;
-                        if (!isNaN(lat) && lat >= 0 && lat < 30000) {
-                            setLatency(lat);
+                // Server may batch multiple JSON objects with newline separators
+                const rawData: string = evt.data;
+                const lines = rawData.indexOf('\n') >= 0 ? rawData.split('\n') : [rawData];
+
+                for (const line of lines) {
+                    if (!line) continue;
+
+                    incrementMsg();
+                    try {
+                        const envelope: WSEnvelope = JSON.parse(line);
+                        if (envelope.ts) {
+                            setLastMsgTS(envelope.ts);
+                            setLastUpdateTime(fmtTime(envelope.ts));
+                            const serverMs = new Date(envelope.ts).getTime();
+                            const lat = Date.now() - serverMs;
+                            if (!isNaN(lat) && lat >= 0 && lat < 30000) {
+                                setLatency(lat);
+                            }
                         }
-                    }
 
-                    // Config update
-                    if (envelope.type === 'config_update' && envelope.entries) {
-                        setActiveEntries(envelope.entries);
-                        return;
-                    }
+                        // Config update
+                        if (envelope.type === 'config_update' && envelope.entries) {
+                            setActiveEntries(envelope.entries);
+                            continue;
+                        }
 
-                    // Metrics
-                    if (envelope.type === 'metrics' && envelope.metrics) {
-                        setMetrics(envelope.metrics);
-                        setMarket(!!envelope.marketOpen, envelope.marketStatus || '');
-                        return;
-                    }
+                        // Metrics
+                        if (envelope.type === 'metrics' && envelope.metrics) {
+                            setMetrics(envelope.metrics);
+                            setMarket(!!envelope.marketOpen, envelope.marketStatus || '');
+                            continue;
+                        }
 
-                    // Pong
-                    if (envelope.type === 'pong' && envelope.ping) {
-                        setWsDelay(Date.now() - envelope.ping);
-                        return;
-                    }
+                        // Pong
+                        if (envelope.type === 'pong' && envelope.ping) {
+                            setWsDelay(Date.now() - envelope.ping);
+                            continue;
+                        }
 
-                    // Data messages
-                    if (!envelope.channel) return;
-                    const parsed = parseChannel(envelope.channel);
-                    if (!parsed) return;
+                        // Data messages
+                        if (!envelope.channel) continue;
+                        const parsed = parseChannel(envelope.channel);
+                        if (!parsed) continue;
 
-                    let payload: Record<string, unknown>;
-                    if (typeof envelope.data === 'string') {
-                        try { payload = JSON.parse(envelope.data as string); } catch { payload = envelope.data as unknown as Record<string, unknown>; }
-                    } else {
-                        payload = envelope.data as Record<string, unknown>;
-                    }
+                        let payload: Record<string, unknown>;
+                        if (typeof envelope.data === 'string') {
+                            try { payload = JSON.parse(envelope.data as string); } catch { payload = envelope.data as unknown as Record<string, unknown>; }
+                        } else {
+                            payload = envelope.data as Record<string, unknown>;
+                        }
 
-                    if (parsed.type === 'candle') {
-                        const d = payload as unknown as CandlePayload;
-                        const tf = d.tf || parsed.tf || 0;
-                        upsertCandle(tf, {
-                            ts: d.ts, open: d.open, high: d.high, low: d.low,
-                            close: d.close, volume: d.volume, count: d.count,
-                            forming: d.forming, exchange: d.exchange, token: d.token,
-                        });
-                        // Aggregate 1s candles into other TFs
-                        if (tf === 1 || parsed.tf === 1) {
-                            const activeTFs = useAppStore.getState().config.tfs || [60];
-                            aggregateToTF(activeTFs, {
+                        if (parsed.type === 'candle') {
+                            const d = payload as unknown as CandlePayload;
+                            const tf = d.tf || parsed.tf || 0;
+                            upsertCandle(tf, {
                                 ts: d.ts, open: d.open, high: d.high, low: d.low,
                                 close: d.close, volume: d.volume, count: d.count,
-                                forming: true, exchange: d.exchange, token: d.token,
+                                forming: d.forming, exchange: d.exchange, token: d.token,
                             });
+                            // Aggregate 1s candles into other TFs
+                            if (tf === 1 || parsed.tf === 1) {
+                                const activeTFs = useAppStore.getState().config.tfs || [60];
+                                aggregateToTF(activeTFs, {
+                                    ts: d.ts, open: d.open, high: d.high, low: d.low,
+                                    close: d.close, volume: d.volume, count: d.count,
+                                    forming: true, exchange: d.exchange, token: d.token,
+                                });
+                            }
                         }
-                    }
 
-                    if (parsed.type === 'indicator') {
-                        const d = payload as unknown as IndicatorPayload;
-                        const key = (d.name || parsed.name || '') + ':' + (d.tf || parsed.tf || 0);
-                        updateIndicator(
-                            key, d.name || parsed.name || '', d.tf || parsed.tf || 0,
-                            d.value, d.ts, d.ready, !!d.live, d.exchange, d.token
-                        );
+                        if (parsed.type === 'indicator') {
+                            const d = payload as unknown as IndicatorPayload;
+                            const key = (d.name || parsed.name || '') + ':' + (d.tf || parsed.tf || 0);
+                            updateIndicator(
+                                key, d.name || parsed.name || '', d.tf || parsed.tf || 0,
+                                d.value, d.ts, d.ready, !!d.live, d.exchange, d.token
+                            );
+                        }
+                    } catch (e) {
+                        console.warn('[ws] parse error', e);
                     }
-                } catch (e) {
-                    console.warn('[ws] parse error', e);
                 }
             };
         }

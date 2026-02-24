@@ -7,7 +7,7 @@ export interface AppConfig {
 }
 
 export interface IndicatorEntry {
-    name: string;   // e.g. "SMA_9", "EMA_4"
+    name: string;   // e.g. "SMA_9", "EMA_4", "SMMA_10"
     tf: number;     // timeframe in seconds
     color?: string; // hex color
 }

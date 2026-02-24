@@ -26,6 +26,7 @@ export function SystemHealth() {
     const cpuOffset = CIRC * (1 - cpuPct / 100);
     const memPct = m?.mem_percent || 0;
     const memOffset = CIRC * (1 - memPct / 100);
+    const indMs = (m?.indicator_compute_ms ?? 0) > 0 ? m?.indicator_compute_ms ?? null : null;
 
     const setLoad = (load: number) => ({
         width: `${Math.min(100, (load / CPU_CORES) * 100)}%`,
@@ -111,6 +112,22 @@ export function SystemHealth() {
                     </div>
                     <div className={styles.detail}>
                         {wsDelay !== null ? `Last ping: ${new Date().toLocaleTimeString('en-IN', { hour12: false })}` : 'Waiting for ping…'}
+                    </div>
+                </div>
+
+                {/* Indicator Latency */}
+                <div className={styles.card}>
+                    <div className={styles.cardTitle}>⏱ Indicator Compute</div>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 4, marginBottom: 10 }}>
+                        <span className={styles.delayVal} style={{
+                            color: indMs === null ? 'var(--text-muted)' : indMs < 1 ? 'var(--green)' : indMs < 3 ? 'var(--yellow)' : 'var(--red)',
+                        }}>
+                            {indMs === null ? '—' : indMs.toFixed(3)}
+                        </span>
+                        <span className={styles.delayUnit}>ms</span>
+                    </div>
+                    <div className={styles.detail}>
+                        {indMs === null ? 'Waiting for data…' : 'EWMA per candle'}
                     </div>
                 </div>
 

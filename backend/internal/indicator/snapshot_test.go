@@ -88,6 +88,35 @@ func TestSnapshot_EMA_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestSnapshot_SMMA_RoundTrip(t *testing.T) {
+	smma := NewSMMA(5)
+	prices := []int64{10000, 10100, 10200, 10300, 10400, 10500, 10600}
+
+	for _, p := range prices {
+		smma.Update(model.Candle{Close: p})
+	}
+
+	snap := smma.Snapshot()
+
+	smma2 := NewSMMA(5)
+	if err := smma2.RestoreFromSnapshot(snap); err != nil {
+		t.Fatalf("restore failed: %v", err)
+	}
+
+	if smma.Value() != smma2.Value() {
+		t.Errorf("value mismatch: original=%.4f restored=%.4f", smma.Value(), smma2.Value())
+	}
+
+	// Feed more data
+	for _, p := range []int64{10700, 10800, 10900} {
+		smma.Update(model.Candle{Close: p})
+		smma2.Update(model.Candle{Close: p})
+		if math.Abs(smma.Value()-smma2.Value()) > 1e-10 {
+			t.Errorf("post-restore divergence: original=%.6f restored=%.6f", smma.Value(), smma2.Value())
+		}
+	}
+}
+
 func TestSnapshot_RSI_RoundTrip(t *testing.T) {
 	rsi := NewRSI(14)
 	// Simulate 20 price changes

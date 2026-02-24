@@ -110,15 +110,37 @@ export const useCandleStore = create<CandleStore>((set) => ({
     updateIndicator: (key, name, tf, value, ts, ready, live, exchange, token) => set((s) => {
         const existing = s.indicators[key] || {
             name, tf, value: null, prevValue: null, ts: null, ready: false,
-            history: [], exchange: '', token: '',
+            history: [], liveValue: null, liveTime: null, exchange: '', token: '',
         };
 
         const tsSec = Math.floor(new Date(ts).getTime() / 1000) + IST_OFFSET;
+
+        if (live) {
+            // Live/peek update: only update liveValue — don't touch history
+            return {
+                indicators: {
+                    ...s.indicators,
+                    [key]: {
+                        ...existing,
+                        prevValue: existing.value,
+                        value,
+                        ts,
+                        ready,
+                        exchange,
+                        token,
+                        liveValue: value,
+                        liveTime: tsSec,
+                    },
+                },
+            };
+        }
+
+        // Confirmed candle: add/update in history, clear live state
         const history = [...existing.history];
         const existIdx = history.findIndex(h => h.time === tsSec);
         if (existIdx >= 0) {
             history[existIdx] = { time: tsSec, value };
-        } else if (ready || live) {
+        } else if (ready) {
             history.push({ time: tsSec, value });
             history.sort((a, b) => a.time - b.time);
         }
@@ -136,6 +158,8 @@ export const useCandleStore = create<CandleStore>((set) => ({
                     exchange,
                     token,
                     history,
+                    liveValue: null,
+                    liveTime: null,
                 },
             },
         };
@@ -151,6 +175,8 @@ export const useCandleStore = create<CandleStore>((set) => ({
                 ts: null,
                 ready: history.length > 0,
                 history,
+                liveValue: null,
+                liveTime: null,
                 exchange,
                 token,
             },

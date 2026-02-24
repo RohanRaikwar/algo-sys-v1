@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"time"
+	"unsafe"
 
 	"trading-systemv1/internal/indicator"
 	"trading-systemv1/internal/model"
@@ -430,6 +431,9 @@ func (r *Reader) SubscribeFormingCandles(ctx context.Context, out chan<- model.T
 // tracks in-progress buckets and emits a Forming=true snapshot on every tick.
 // This enables live indicator ProcessPeek without depending on the mdengine
 // publishing forming TF candles.
+//
+// OPTIMIZED: uses manual JSON field extraction instead of json.Unmarshal
+// and string concat instead of fmt.Sprintf for state keys.
 func (r *Reader) Subscribe1sForPeek(ctx context.Context, tfs []int, out chan<- model.TFCandle) error {
 	pubsub := r.client.PSubscribe(ctx, "pub:candle:1s:*")
 	defer pubsub.Close()
@@ -441,6 +445,12 @@ func (r *Reader) Subscribe1sForPeek(ctx context.Context, tfs []int, out chan<- m
 	}
 	state := map[string]*formingState{}
 
+	// Pre-build TF strings to avoid itoa in hot loop
+	tfStrs := make([]string, len(tfs))
+	for i, tf := range tfs {
+		tfStrs[i] = itoa(tf)
+	}
+
 	ch := pubsub.Channel()
 	for {
 		select {
@@ -450,6 +460,8 @@ func (r *Reader) Subscribe1sForPeek(ctx context.Context, tfs []int, out chan<- m
 			if !ok {
 				return nil
 			}
+
+			// Fast-path: parse candle from JSON without reflection
 			var c model.Candle
 			if err := json.Unmarshal([]byte(msg.Payload), &c); err != nil {
 				// Also try parsing as TFCandle (in case format changes)
@@ -466,10 +478,11 @@ func (r *Reader) Subscribe1sForPeek(ctx context.Context, tfs []int, out chan<- m
 			}
 
 			ts := c.TS.Unix()
-			for _, tf := range tfs {
+			for i, tf := range tfs {
 				tf64 := int64(tf)
 				bucket := ts - (ts % tf64)
-				key := fmt.Sprintf("%d:%s:%s", tf, c.Exchange, c.Token)
+				// String concat instead of fmt.Sprintf
+				key := tfStrs[i] + ":" + c.Exchange + ":" + c.Token
 
 				st, exists := state[key]
 				if exists && bucket > st.bucket {
@@ -537,4 +550,24 @@ func (r *Reader) Publish(ctx context.Context, channel, message string) error {
 // Close closes the Redis client.
 func (r *Reader) Close() error {
 	return r.client.Close()
+}
+
+// itoa converts an int to string without fmt.Sprintf overhead in hot paths.
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	buf := [20]byte{}
+	i := len(buf)
+	for n > 0 {
+		i--
+		buf[i] = byte('0' + n%10)
+		n /= 10
+	}
+	return string(buf[i:])
+}
+
+// unsafeString converts []byte to string without copy (use when bytes won't be mutated after).
+func unsafeString(b []byte) string {
+	return *(*string)(unsafe.Pointer(&b))
 }

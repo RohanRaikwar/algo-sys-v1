@@ -63,6 +63,7 @@ func TestEngine_MultiIndicator(t *testing.T) {
 			Indicators: []IndicatorConfig{
 				{Type: "SMA", Period: 5},
 				{Type: "EMA", Period: 5},
+				{Type: "SMMA", Period: 5},
 				{Type: "RSI", Period: 14},
 			},
 		},
@@ -70,8 +71,8 @@ func TestEngine_MultiIndicator(t *testing.T) {
 
 	for i := 0; i < 20; i++ {
 		results := engine.Process(makeTFCandle("A", 60, int64(10000+i*100)))
-		if len(results) != 3 {
-			t.Fatalf("candle %d: expected 3 results, got %d", i, len(results))
+		if len(results) != 4 {
+			t.Fatalf("candle %d: expected 4 results, got %d", i, len(results))
 		}
 	}
 }

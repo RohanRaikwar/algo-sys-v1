@@ -29,6 +29,7 @@ export interface SystemMetrics {
     goroutines: number;
     gc_runs: number;
     uptime_sec: number;
+    indicator_compute_ms?: number;
 }
 
 export interface ParsedChannel {

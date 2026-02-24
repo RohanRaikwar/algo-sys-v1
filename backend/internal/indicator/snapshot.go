@@ -15,7 +15,7 @@ type Snapshottable interface {
 
 // IndicatorSnapshot holds the serialized state of a single indicator instance.
 type IndicatorSnapshot struct {
-	Type   string `json:"type"`   // "SMA", "EMA", "RSI"
+	Type   string `json:"type"`   // "SMA", "EMA", "SMMA", "RSI"
 	Period int    `json:"period"` // indicator period
 
 	// SMA fields

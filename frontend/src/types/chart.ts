@@ -20,7 +20,9 @@ export interface IndicatorState {
     prevValue: number | null;
     ts: string | null;
     ready: boolean;
-    history: ChartPoint[];
+    history: ChartPoint[];         // confirmed indicator points only
+    liveValue: number | null;      // current live/peek value (forming candle)
+    liveTime: number | null;       // timestamp for live point (unix seconds IST)
     exchange: string;
     token: string;
 }

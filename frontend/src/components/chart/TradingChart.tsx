@@ -18,6 +18,8 @@ export function TradingChart() {
     const loadingRef = useRef(false);
     const hasMoreRef = useRef(true);
     const oldestTSRef = useRef<string | null>(null);
+    // Track last confirmed history fingerprint per indicator to skip unnecessary setData()
+    const lastHistoryFingerprint = useRef<Record<string, string>>({});
 
     const { config, selectedToken, selectedTF, activeEntries, setSelectedTF } = useAppStore();
     const candles = useCandleStore((s) => s.candles);
@@ -221,10 +223,7 @@ export function TradingChart() {
                 const candleData = await fetchCandles(tf, token, FETCH_SIZE);
                 if (candleData.length === 0) return;
 
-                const newest = candleData[candleData.length - 1];
-                const refPrice = newest.close;
-                const threshold = refPrice * 0.20;
-                const filtered = candleData.filter(c => c.ts && Math.abs(c.close - refPrice) <= threshold);
+                const filtered = candleData.filter(c => c.ts);
                 if (filtered.length === 0) return;
 
                 mergeCandles(tf, filtered.map(c => ({
@@ -233,6 +232,9 @@ export function TradingChart() {
                     exchange: c.exchange, token: c.token,
                 })));
                 oldestTSRef.current = filtered[0].ts;
+
+                // Compute earliest candle time so indicator lines don't extend beyond candle range
+                const earliestCandleTime = Math.floor(new Date(filtered[0].ts).getTime() / 1000) + IST_OFFSET;
 
                 // Load indicator history for all active entries
                 const allEntries = activeEntries.filter(e => !e.name.startsWith('RSI'));
@@ -244,9 +246,7 @@ export function TradingChart() {
                         const allPts = points.filter(p => p.ts && p.value !== undefined).map(p => ({
                             time: Math.floor(new Date(p.ts).getTime() / 1000) + IST_OFFSET, value: p.value,
                         }));
-                        const refVal = allPts.length > 0 ? allPts[allPts.length - 1].value : 0;
-                        const tol = refVal * 0.30;
-                        const newHistory = allPts.filter(h => Math.abs(h.value - refVal) <= tol);
+                        const newHistory = allPts.filter(h => h.time >= earliestCandleTime);
                         setIndicatorHistory(fullKey, entry.name, entry.tf, newHistory);
                     } catch { /* ignore */ }
                 }));
@@ -270,11 +270,7 @@ export function TradingChart() {
             })
             .sort((a, b) => a.time - b.time);
 
-        if (data.length > 1) {
-            const refClose = data[data.length - 1].close;
-            const tol = refClose * 0.20;
-            data = data.filter(d => Math.abs(d.close - refClose) <= tol);
-        }
+
 
         // Deduplicate by timestamp (lightweight-charts requires strictly ascending times)
         if (data.length > 0) {
@@ -287,17 +283,18 @@ export function TradingChart() {
         }
     }, [candles, selectedTF, selectedToken]);
 
-    // Update indicator lines
+    // Update indicator lines — confirmed history via setData(), live peek via update()
     useEffect(() => {
         if (!chartApi.current) return;
         const chartTF = selectedTF || 60;
 
-        // Remove stale
+        // Remove stale series
         const activeKeys = new Set(activeEntries.map(e => entryKey(e)));
         for (const key of Object.keys(indLineSeries.current)) {
             if (!activeKeys.has(key)) {
                 try { chartApi.current.removeSeries(indLineSeries.current[key]); } catch { /* */ }
                 delete indLineSeries.current[key];
+                delete lastHistoryFingerprint.current[key];
             }
         }
 
@@ -331,22 +328,44 @@ export function TradingChart() {
                     .sort((a, b) => a.time - b.time);
             }
 
-            if (lineData.length > 0) {
-                // Deduplicate by timestamp
-                const seen = new Map<number, typeof lineData[0]>();
-                for (const pt of lineData) seen.set(pt.time, pt);
-                lineData = Array.from(seen.values()).sort((a, b) => a.time - b.time);
+            if (lineData.length === 0) continue;
 
-                const color = getEntryColor(entry);
-                if (!indLineSeries.current[compositeKey]) {
-                    const parts = compositeKey.split(':');
-                    const displayTitle = parts[0] + ' (' + tfLabel(parseInt(parts[1]) || 0) + ')';
-                    indLineSeries.current[compositeKey] = chartApi.current!.addLineSeries({
-                        color, lineWidth: 2 as LineWidth, crosshairMarkerVisible: false,
-                        lastValueVisible: true, priceLineVisible: false, title: displayTitle,
-                    });
-                }
+            // Deduplicate by timestamp
+            const seen = new Map<number, typeof lineData[0]>();
+            for (const pt of lineData) seen.set(pt.time, pt);
+            lineData = Array.from(seen.values()).sort((a, b) => a.time - b.time);
+
+            const color = getEntryColor(entry);
+
+            // Create series if needed
+            if (!indLineSeries.current[compositeKey]) {
+                const parts = compositeKey.split(':');
+                const displayTitle = parts[0] + ' (' + tfLabel(parseInt(parts[1]) || 0) + ')';
+                indLineSeries.current[compositeKey] = chartApi.current!.addLineSeries({
+                    color, lineWidth: 1 as LineWidth, crosshairMarkerVisible: false,
+                    lastValueVisible: true, priceLineVisible: false, title: displayTitle,
+                });
+            }
+
+            // Compute fingerprint of confirmed history to avoid unnecessary setData()
+            const lastPt = lineData[lineData.length - 1];
+            const fingerprint = `${lineData.length}:${lastPt.time}:${lastPt.value.toFixed(4)}`;
+            const prevFingerprint = lastHistoryFingerprint.current[compositeKey];
+
+            if (fingerprint !== prevFingerprint) {
+                // Confirmed history changed → full setData()
                 indLineSeries.current[compositeKey].setData(lineData as LineData[]);
+                lastHistoryFingerprint.current[compositeKey] = fingerprint;
+            }
+
+            // Live peek value → efficient update() (no full redraw)
+            if (ind.liveValue !== null && ind.liveTime !== null) {
+                const lastConfirmedTime = lineData[lineData.length - 1].time;
+                const liveT = ind.liveTime >= lastConfirmedTime ? ind.liveTime : lastConfirmedTime;
+                indLineSeries.current[compositeKey].update({
+                    time: liveT as number,
+                    value: ind.liveValue,
+                } as LineData);
             }
         }
     }, [indicators, activeEntries, selectedTF, candles, selectedToken]);
