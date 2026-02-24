@@ -1,0 +1,80 @@
+# ═══════════════════════════════════════════════════════════════
+#  VM 1 — Core Engine (2 vCPU, 4 GB RAM)
+# ═══════════════════════════════════════════════════════════════
+#
+#  PRODUCTION:  docker compose -f docker-compose.core.yml up -d
+#  STAGING:     docker compose -f docker-compose.core.yml --profile staging up -d
+#
+#  Use .env.production or .env.staging — copy to .env before running.
+
+services:
+  # ── Redis ──
+  redis:
+    image: redis:7-alpine
+    container_name: ts-redis
+    restart: always
+    command: [ "redis-server", "--maxmemory", "2gb", "--maxmemory-policy", "allkeys-lru", "--save", "", "--appendonly", "no" ]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ── Market Data Engine (MS1) ──
+  mdengine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: trading-system:latest
+    container_name: ts-mdengine
+    command: mdengine
+    restart: always
+    depends_on:
+      redis:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      - REDIS_ADDR=redis:6379
+      - SQLITE_PATH=/data/candles.db
+    volumes:
+      - sqlite-data:/data
+
+  # ── Indicator Engine (MS2) ──
+  indengine:
+    image: trading-system:latest
+    container_name: ts-indengine
+    command: indengine
+    restart: always
+    depends_on:
+      redis:
+        condition: service_healthy
+      mdengine:
+        condition: service_started
+    env_file: .env
+    environment:
+      - REDIS_ADDR=redis:6379
+      - SQLITE_PATH=/data/candles.db
+    volumes:
+      - sqlite-data:/data
+
+  # ── Tick Server (STAGING ONLY) ──
+  tickserver:
+    image: trading-system:latest
+    container_name: ts-tickserver
+    command: tickserver
+    restart: always
+    env_file: .env
+    ports:
+      - "9001:9001"
+    profiles:
+      - staging
+
+volumes:
+  redis-data:
+    driver: local
+  sqlite-data:
+    driver: local

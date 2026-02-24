@@ -1,0 +1,30 @@
+# env files
+.env
+.env.*
+
+# data / db / logs
+/data/
+backend/data/
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+# node
+node_modules/
+frontend/dist/
+
+# go
+/bin/
+/dist/
+*.exe
+*.out
+
+# editor/OS
+.DS_Store
+.idea/
+.vscode/
+
+# build artifacts
+*.tmp
+*.cache

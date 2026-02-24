@@ -1,0 +1,876 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TradingView — Real-Time Chart</title>
+    <meta name="description"
+        content="Real-time candlestick chart with SMA, EMA, RSI overlays powered by live WebSocket data">
+    <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap"
+        rel="stylesheet">
+    <style>
+        *,
+        *::before,
+        *::after {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        :root {
+            --bg: #0d1117;
+            --bg2: #161b22;
+            --bg3: #21262d;
+            --border: rgba(48, 54, 61, 0.8);
+            --accent: #58a6ff;
+            --accent2: #3fb950;
+            --red: #f85149;
+            --yellow: #e3b341;
+            --purple: #bc8cff;
+            --orange: #ffa657;
+            --text: #e6edf3;
+            --text2: #8b949e;
+            --text3: #484f58;
+            --font: 'Inter', system-ui, sans-serif;
+            --mono: 'JetBrains Mono', monospace;
+            --r: 8px;
+            --tr: 0.18s ease;
+        }
+
+        html,
+        body {
+            height: 100%;
+            overflow: hidden;
+            background: var(--bg);
+            color: var(--text);
+            font-family: var(--font);
+            font-size: 13px;
+        }
+
+        /* ── Layout ─── */
+        .app {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        /* ── Topbar ─── */
+        .topbar {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 0 16px;
+            height: 48px;
+            background: var(--bg2);
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+            z-index: 10;
+            flex-wrap: wrap;
+        }
+
+        .logo {
+            font-size: 1.1rem;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+            background: linear-gradient(135deg, var(--accent), var(--purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            white-space: nowrap;
+        }
+
+        .sep {
+            width: 1px;
+            height: 24px;
+            background: var(--border);
+            flex-shrink: 0;
+        }
+
+        .sym-input {
+            font-family: var(--mono);
+            font-size: 0.82rem;
+            background: var(--bg3);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 5px 10px;
+            border-radius: var(--r);
+            outline: none;
+            transition: border-color var(--tr);
+            width: 110px;
+        }
+
+        .sym-input:focus {
+            border-color: var(--accent);
+        }
+
+        .tf-group {
+            display: flex;
+            gap: 3px;
+        }
+
+        .tf-btn {
+            font-family: var(--mono);
+            font-size: 0.74rem;
+            font-weight: 600;
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text2);
+            padding: 4px 9px;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: all var(--tr);
+        }
+
+        .tf-btn:hover {
+            border-color: var(--accent);
+            color: var(--text);
+        }
+
+        .tf-btn.active {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: #fff;
+        }
+
+        .ind-group {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .ind-label {
+            font-size: 0.73rem;
+            color: var(--text2);
+        }
+
+        .ind-input {
+            font-family: var(--mono);
+            font-size: 0.74rem;
+            width: 44px;
+            background: var(--bg3);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 4px 6px;
+            border-radius: 5px;
+            outline: none;
+            text-align: center;
+            transition: border-color var(--tr);
+        }
+
+        .ind-input:focus {
+            border-color: var(--accent);
+        }
+
+        .sub-btn {
+            padding: 5px 14px;
+            border-radius: var(--r);
+            background: var(--accent);
+            border: none;
+            color: #fff;
+            font-size: 0.8rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background var(--tr), transform 0.1s;
+        }
+
+        .sub-btn:hover {
+            background: #79b8ff;
+        }
+
+        .sub-btn:active {
+            transform: scale(0.97);
+        }
+
+        .conn-pill {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 0.72rem;
+            padding: 4px 10px;
+            border-radius: 999px;
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+            color: #3fb950;
+            margin-left: auto;
+        }
+
+        .conn-pill.dc {
+            background: rgba(248, 81, 73, 0.1);
+            border-color: rgba(248, 81, 73, 0.25);
+            color: var(--red);
+        }
+
+        .conn-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: currentColor;
+            animation: blink 2s infinite;
+        }
+
+        @keyframes blink {
+
+            0%,
+            100% {
+                opacity: 1
+            }
+
+            50% {
+                opacity: 0.3
+            }
+        }
+
+        /* ── Status bar ─── */
+        .statusbar {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            padding: 0 16px;
+            height: 30px;
+            background: var(--bg2);
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+            font-family: var(--mono);
+            font-size: 0.73rem;
+        }
+
+        .sb-sym {
+            font-weight: 700;
+            color: var(--text);
+        }
+
+        .sb-o {
+            color: var(--text2);
+        }
+
+        .sb-h {
+            color: var(--accent2);
+        }
+
+        .sb-l {
+            color: var(--red);
+        }
+
+        .sb-c {
+            color: var(--text);
+            font-weight: 600;
+        }
+
+        .sb-v {
+            color: var(--text2);
+        }
+
+        .sb-chg {
+            font-weight: 600;
+        }
+
+        .sb-chg.up {
+            color: var(--accent2);
+        }
+
+        .sb-chg.dn {
+            color: var(--red);
+        }
+
+        .sb-ind {
+            color: var(--text2);
+        }
+
+        /* ── Chart area ─── */
+        .charts-wrap {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            overflow: hidden;
+            position: relative;
+        }
+
+        #chart-main {
+            flex: 1;
+            min-height: 0;
+        }
+
+        .rsi-row {
+            flex-shrink: 0;
+            height: 130px;
+            border-top: 1px solid var(--border);
+            position: relative;
+        }
+
+        #chart-rsi {
+            width: 100%;
+            height: 100%;
+        }
+
+        .pane-label {
+            position: absolute;
+            top: 6px;
+            left: 10px;
+            font-family: var(--mono);
+            font-size: 0.68rem;
+            color: var(--text3);
+            pointer-events: none;
+            z-index: 2;
+        }
+
+        /* ── Legend overlay ─── */
+        .legend {
+            position: absolute;
+            top: 6px;
+            left: 10px;
+            font-family: var(--mono);
+            font-size: 0.72rem;
+            pointer-events: none;
+            z-index: 5;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .legend-row {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .legend-dot {
+            width: 8px;
+            height: 3px;
+            border-radius: 2px;
+        }
+
+        /* ── Sidebar ─── */
+        .sidebar {
+            position: absolute;
+            right: 0;
+            top: 0;
+            bottom: 0;
+            width: 200px;
+            background: rgba(22, 27, 34, 0.95);
+            backdrop-filter: blur(8px);
+            border-left: 1px solid var(--border);
+            padding: 12px;
+            overflow-y: auto;
+            z-index: 4;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            transform: translateX(100%);
+            transition: transform 0.25s ease;
+        }
+
+        .sidebar.open {
+            transform: translateX(0);
+        }
+
+        .sidebar-title {
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text3);
+            margin-bottom: 4px;
+        }
+
+        .ind-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 6px 8px;
+            background: var(--bg3);
+            border-radius: 5px;
+        }
+
+        .ind-row-name {
+            font-family: var(--mono);
+            font-size: 0.75rem;
+        }
+
+        .ind-row-val {
+            font-family: var(--mono);
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        /* ── Toast ─── */
+        #toast {
+            position: fixed;
+            bottom: 16px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--bg3);
+            border: 1px solid var(--border);
+            border-radius: var(--r);
+            padding: 8px 18px;
+            font-size: 0.78rem;
+            color: var(--text2);
+            opacity: 0;
+            transition: opacity 0.3s;
+            pointer-events: none;
+            z-index: 99;
+            white-space: nowrap;
+        }
+
+        #toast.show {
+            opacity: 1;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="app">
+        <!-- ── Topbar ──────────────────────────────────────────── -->
+        <div class="topbar">
+            <span class="logo">⚡ TradingView</span>
+            <div class="sep"></div>
+
+            <input id="sym-input" class="sym-input" placeholder="NSE:26009" value="NSE:26009"
+                title="Symbol (EXCHANGE:TOKEN)">
+
+            <div class="sep"></div>
+            <div class="tf-group" id="tf-group">
+                <button class="tf-btn" data-tf="1">1s</button>
+                <button class="tf-btn active" data-tf="60">1m</button>
+                <button class="tf-btn" data-tf="300">5m</button>
+                <button class="tf-btn" data-tf="900">15m</button>
+                <button class="tf-btn" data-tf="3600">1h</button>
+            </div>
+
+            <div class="sep"></div>
+            <div class="ind-group">
+                <span class="ind-label">SMA</span>
+                <input id="sma-w1" class="ind-input" type="number" value="9" min="1" max="500" title="SMA period 1">
+                <input id="sma-w2" class="ind-input" type="number" value="20" min="1" max="500" title="SMA period 2">
+            </div>
+            <div class="ind-group">
+                <span class="ind-label">EMA</span>
+                <input id="ema-w1" class="ind-input" type="number" value="9" min="1" max="500" title="EMA period 1">
+                <input id="ema-w2" class="ind-input" type="number" value="21" min="1" max="500" title="EMA period 2">
+            </div>
+            <div class="ind-group">
+                <span class="ind-label">RSI</span>
+                <input id="rsi-w" class="ind-input" type="number" value="14" min="2" max="100" title="RSI period">
+            </div>
+
+            <div class="sep"></div>
+            <button id="sub-btn" class="sub-btn">Subscribe</button>
+
+            <div id="conn-pill" class="conn-pill dc">
+                <span class="conn-dot"></span>
+                <span id="conn-label">Connecting…</span>
+            </div>
+        </div>
+
+        <!-- ── Status bar ─────────────────────────────────────── -->
+        <div class="statusbar">
+            <span id="sb-sym" class="sb-sym">—</span>
+            <span>O <span id="sb-o" class="sb-o">—</span></span>
+            <span>H <span id="sb-h" class="sb-h">—</span></span>
+            <span>L <span id="sb-l" class="sb-l">—</span></span>
+            <span>C <span id="sb-c" class="sb-c">—</span></span>
+            <span>Vol <span id="sb-v" class="sb-v">—</span></span>
+            <span id="sb-chg" class="sb-chg">—</span>
+            <span id="sb-inds" class="sb-ind"></span>
+        </div>
+
+        <!-- ── Chart Area ─────────────────────────────────────── -->
+        <div class="charts-wrap" id="charts-wrap">
+            <div id="chart-main">
+                <div class="legend" id="legend"></div>
+            </div>
+            <div class="rsi-row" id="rsi-row">
+                <div class="pane-label" id="rsi-label">RSI(14) —</div>
+                <div id="chart-rsi"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="toast"></div>
+
+    <script>
+        'use strict';
+
+        // ─── State ────────────────────────────────────────────────────────────────────
+        let mainChart, candleSeries, volumeSeries, mainSeriesMap = {};
+        let rsiChart, rsiSeries;
+        let ws = null;
+        let currentSymbol = 'NSE:26009';
+        let currentTF = 60;
+        let lastCandle = null;
+        let indLatest = {};
+
+        // Colors for overlay lines
+        const LINE_COLORS = {
+            'SMA_9': '#58a6ff',
+            'SMA_20': '#ffa657',
+            'SMA_50': '#bc8cff',
+            'SMA_200': '#e3b341',
+            'EMA_9': '#3fb950',
+            'EMA_21': '#f85149',
+            'EMA_50': '#79c0ff',
+            'EMA_200': '#d2a8ff',
+        };
+        function lineColor(name) {
+            return LINE_COLORS[name] || ('#' + Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0'));
+        }
+
+        // ─── Chart Initialization ─────────────────────────────────────────────────────
+        function initCharts() {
+            const chartEl = document.getElementById('chart-main');
+            const rsiEl = document.getElementById('chart-rsi');
+
+            // Main chart
+            mainChart = LightweightCharts.createChart(chartEl, {
+                layout: { background: { color: '#0d1117' }, textColor: '#8b949e' },
+                grid: { vertLines: { color: 'rgba(48,54,61,0.3)' }, horzLines: { color: 'rgba(48,54,61,0.3)' } },
+                crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+                rightPriceScale: { borderColor: 'rgba(48,54,61,0.4)' },
+                timeScale: { borderColor: 'rgba(48,54,61,0.4)', timeVisible: true, secondsVisible: true },
+                handleScroll: true, handleScale: true,
+            });
+
+            // Candlestick series
+            candleSeries = mainChart.addCandlestickSeries({
+                upColor: '#3fb950', downColor: '#f85149',
+                borderUpColor: '#3fb950', borderDownColor: '#f85149',
+                wickUpColor: '#3fb950', wickDownColor: '#f85149',
+                priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+            });
+
+            // Volume histogram on its own scale
+            volumeSeries = mainChart.addHistogramSeries({
+                color: 'rgba(99,102,241,0.35)',
+                priceFormat: { type: 'volume' },
+                priceScaleId: 'vol',
+                scaleMargins: { top: 0.8, bottom: 0 },
+            });
+            mainChart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
+
+            // RSI chart
+            rsiChart = LightweightCharts.createChart(rsiEl, {
+                layout: { background: { color: '#0d1117' }, textColor: '#8b949e' },
+                grid: { vertLines: { color: 'rgba(48,54,61,0.2)' }, horzLines: { color: 'rgba(48,54,61,0.2)' } },
+                crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+                rightPriceScale: { borderColor: 'rgba(48,54,61,0.4)' },
+                timeScale: { borderColor: 'rgba(48,54,61,0.4)', timeVisible: true, secondsVisible: true },
+                handleScroll: false, handleScale: false,
+            });
+
+            // RSI line
+            rsiSeries = rsiChart.addLineSeries({
+                color: '#bc8cff', lineWidth: 1.5,
+                priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+                autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } }),
+            });
+            // Overbought / oversold bands
+            rsiChart.addLineSeries({ color: 'rgba(248,81,73,0.4)', lineWidth: 1, lineStyle: 2 })
+                .setData([]); // will stay empty (static horizontal at 70/30 — injected below)
+
+            // Sync time scales
+            mainChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+                if (range) rsiChart.timeScale().setVisibleLogicalRange(range);
+            });
+            rsiChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+                if (range) mainChart.timeScale().setVisibleLogicalRange(range);
+            });
+
+            // Crosshair sync
+            mainChart.subscribeCrosshairMove(param => {
+                if (param?.time) rsiChart.setCrosshairPosition(param.point?.x ?? 0, param.point?.y ?? 0, rsiSeries);
+                updateLegend(param);
+            });
+
+            // Resize observer
+            const ro = new ResizeObserver(() => fitCharts());
+            ro.observe(chartEl);
+            ro.observe(rsiEl);
+            fitCharts();
+        }
+
+        function fitCharts() {
+            const chartEl = document.getElementById('chart-main');
+            if (!mainChart || !chartEl) return;
+            mainChart.resize(chartEl.clientWidth, chartEl.clientHeight);
+            const rsiEl = document.getElementById('chart-rsi');
+            if (rsiChart && rsiEl) rsiChart.resize(rsiEl.clientWidth, rsiEl.clientHeight);
+        }
+
+        // ─── Legend ───────────────────────────────────────────────────────────────────
+        function updateLegend(param) {
+            const el = document.getElementById('legend');
+            el.innerHTML = '';
+            Object.entries(mainSeriesMap).forEach(([name, series]) => {
+                if (!series) return;
+                let val = '';
+                if (param?.seriesData?.has(series)) {
+                    const d = param.seriesData.get(series);
+                    val = d?.value !== undefined ? fmtPrice(d.value) : '';
+                }
+                const c = lineColor(name);
+                el.innerHTML += `<div class="legend-row">
+      <span class="legend-dot" style="background:${c}"></span>
+      <span style="color:${c};font-size:0.7rem">${name}</span>
+      ${val ? `<span style="color:#e6edf3;font-size:0.7rem">${val}</span>` : ''}
+    </div>`;
+            });
+        }
+
+        // ─── Data Loading (REST) ──────────────────────────────────────────────────────
+        async function loadHistory(symbol, tf, indicators) {
+            const [ex, tok] = symbol.split(':');
+            const now = Math.floor(Date.now() / 1000);
+            const from = now - tf * 500;
+            const base = window.location.origin;
+
+            // Candles
+            try {
+                const res = await fetch(`${base}/candles?symbol=${symbol}&tf=${tf}&from=${from}&to=${now + tf}`);
+                const candles = await res.json();
+                if (Array.isArray(candles) && candles.length > 0) {
+                    const cdata = candles.map(c => ({
+                        time: Math.floor(new Date(c.ts).getTime() / 1000),
+                        open: c.open / 100, high: c.high / 100, low: c.low / 100, close: c.close / 100,
+                    }));
+                    const vdata = candles.map(c => ({
+                        time: Math.floor(new Date(c.ts).getTime() / 1000),
+                        value: c.volume ?? 0,
+                        color: c.close >= c.open ? 'rgba(63,185,80,0.35)' : 'rgba(248,81,73,0.35)',
+                    }));
+                    candleSeries.setData(cdata);
+                    volumeSeries.setData(vdata);
+                    lastCandle = candles[candles.length - 1];
+                    updateStatusBar(lastCandle);
+                    toast(`Loaded ${candles.length} candles`);
+                }
+            } catch (e) { console.warn('history candles error', e); }
+
+            // Indicators
+            for (const ind of indicators) {
+                const indName = `${ind.type.toUpperCase()}_${ind.window}`;
+                try {
+                    const res = await fetch(`${base}/indicators?symbol=${symbol}&tf=${tf}&type=${ind.type}&window=${ind.window}&from=${from}&to=${now + tf}`);
+                    const pts = await res.json();
+                    if (Array.isArray(pts) && pts.length > 0) {
+                        const ldata = pts.map(p => ({ time: p.ts, value: p.value }));
+                        getOrCreateLineSeries(indName).setData(ldata);
+                    }
+                } catch (e) { console.warn('history indicator error', e); }
+            }
+
+            // Attempt RSI separately
+            const rsiW = parseInt(document.getElementById('rsi-w').value) || 14;
+            try {
+                const res = await fetch(`${base}/indicators?symbol=${symbol}&tf=${tf}&type=rsi&window=${rsiW}&from=${from}&to=${now + tf}`);
+                const pts = await res.json();
+                if (Array.isArray(pts) && pts.length > 0) {
+                    rsiSeries.setData(pts.map(p => ({ time: p.ts, value: p.value })));
+                    addRSIBands(pts);
+                }
+            } catch (e) { }
+
+            mainChart.timeScale().fitContent();
+        }
+
+        function addRSIBands(pts) {
+            if (!pts.length) return;
+            const t0 = pts[0].time, tN = pts[pts.length - 1].time;
+            const ob = rsiChart.addLineSeries({ color: 'rgba(248,81,73,0.35)', lineWidth: 1, lineStyle: 2, lastValueVisible: false, priceLineVisible: false });
+            const os = rsiChart.addLineSeries({ color: 'rgba(63,185,80,0.35)', lineWidth: 1, lineStyle: 2, lastValueVisible: false, priceLineVisible: false });
+            ob.setData([{ time: t0, value: 70 }, { time: tN, value: 70 }]);
+            os.setData([{ time: t0, value: 30 }, { time: tN, value: 30 }]);
+        }
+
+        // ─── Series management ────────────────────────────────────────────────────────
+        function getOrCreateLineSeries(name) {
+            if (!mainSeriesMap[name]) {
+                mainSeriesMap[name] = mainChart.addLineSeries({
+                    color: lineColor(name),
+                    lineWidth: 1.5,
+                    priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+                    lastValueVisible: true,
+                    title: name,
+                });
+            }
+            return mainSeriesMap[name];
+        }
+
+        function clearAllSeries() {
+            Object.keys(mainSeriesMap).forEach(k => {
+                mainChart.removeSeries(mainSeriesMap[k]);
+            });
+            mainSeriesMap = {};
+            candleSeries.setData([]);
+            volumeSeries.setData([]);
+            rsiSeries.setData([]);
+        }
+
+        // ─── WebSocket ────────────────────────────────────────────────────────────────
+        function buildIndicatorList() {
+            const sma1 = parseInt(document.getElementById('sma-w1').value) || 9;
+            const sma2 = parseInt(document.getElementById('sma-w2').value) || 20;
+            const ema1 = parseInt(document.getElementById('ema-w1').value) || 9;
+            const ema2 = parseInt(document.getElementById('ema-w2').value) || 21;
+            const rsiW = parseInt(document.getElementById('rsi-w').value) || 14;
+            return [
+                { type: 'sma', window: sma1 },
+                { type: 'sma', window: sma2 },
+                { type: 'ema', window: ema1 },
+                { type: 'ema', window: ema2 },
+                { type: 'rsi', window: rsiW },
+            ].filter(i => i.window > 0);
+        }
+
+        function connectWS(symbol, tf, indicators) {
+            if (ws) { ws.close(); ws = null; }
+
+            const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const url = `${proto}//${location.host}/ws`;
+            ws = new WebSocket(url);
+            setConn('connecting');
+
+            ws.onopen = () => {
+                setConn('connected');
+                ws.send(JSON.stringify({ type: 'subscribe', symbol, tf, indicators }));
+                toast(`Subscribed: ${symbol} @ ${fmtTF(tf)}`);
+            };
+
+            ws.onmessage = (ev) => {
+                let msg;
+                try { msg = JSON.parse(ev.data); } catch { return; }
+                if (msg.type === 'candle') handleCandle(msg.data);
+                else if (msg.type === 'indicator') handleIndicator(msg.data);
+            };
+
+            ws.onclose = () => setConn('disconnected');
+            ws.onerror = () => setConn('disconnected');
+        }
+
+        function handleCandle(c) {
+            if (!c) return;
+            const ts = Math.floor(new Date(c.ts).getTime() / 1000);
+            const bar = { time: ts, open: c.open / 100, high: c.high / 100, low: c.low / 100, close: c.close / 100 };
+            const vol = { time: ts, value: c.volume ?? 0, color: c.close >= c.open ? 'rgba(63,185,80,0.35)' : 'rgba(248,81,73,0.35)' };
+            candleSeries.update(bar);
+            volumeSeries.update(vol);
+            lastCandle = c;
+            updateStatusBar(c);
+        }
+
+        function handleIndicator(r) {
+            if (!r || !r.name) return;
+            const ts = Math.floor(new Date(r.ts).getTime() / 1000);
+            const pt = { time: ts, value: r.value };
+
+            if (r.name.startsWith('RSI')) {
+                rsiSeries.update(pt);
+                document.getElementById('rsi-label').textContent = `${r.name} ${r.value.toFixed(2)}`;
+            } else {
+                getOrCreateLineSeries(r.name).update(pt);
+            }
+
+            // Update sidebar latest values
+            indLatest[r.name] = r.value;
+            updateIndStatusBar();
+        }
+
+        // ─── Status bar helpers ───────────────────────────────────────────────────────
+        function updateStatusBar(c) {
+            if (!c) return;
+            document.getElementById('sb-sym').textContent = currentSymbol;
+            const p = 100; // paise divisor
+            document.getElementById('sb-o').textContent = fmtPrice(c.open / p);
+            document.getElementById('sb-h').textContent = fmtPrice(c.high / p);
+            document.getElementById('sb-l').textContent = fmtPrice(c.low / p);
+            document.getElementById('sb-c').textContent = fmtPrice(c.close / p);
+            document.getElementById('sb-v').textContent = fmtVol(c.volume);
+            const chg = c.close - c.open;
+            const pct = c.open > 0 ? (chg / c.open * 100) : 0;
+            const el = document.getElementById('sb-chg');
+            el.textContent = `${chg >= 0 ? '+' : ''}${(chg / p).toFixed(2)} (${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%)`;
+            el.className = 'sb-chg ' + (chg >= 0 ? 'up' : 'dn');
+        }
+
+        function updateIndStatusBar() {
+            const parts = Object.entries(indLatest).slice(0, 5).map(([k, v]) => `${k}: ${v.toFixed(2)}`);
+            document.getElementById('sb-inds').textContent = parts.join('  ');
+        }
+
+        // ─── Connectivity ─────────────────────────────────────────────────────────────
+        function setConn(state) {
+            const pill = document.getElementById('conn-pill');
+            const label = document.getElementById('conn-label');
+            pill.className = 'conn-pill' + (state === 'connected' ? '' : ' dc');
+            label.textContent = state === 'connected' ? 'Live' : state === 'connecting' ? 'Connecting…' : 'Disconnected';
+        }
+
+        // ─── TF utils ─────────────────────────────────────────────────────────────────
+        function fmtTF(tf) {
+            if (tf < 60) return tf + 's';
+            if (tf < 3600) return (tf / 60) + 'm';
+            return (tf / 3600) + 'h';
+        }
+        function fmtPrice(v) { return typeof v === 'number' ? v.toFixed(2) : '—'; }
+        function fmtVol(v) {
+            if (!v || v === 0) return '—';
+            if (v >= 1e7) return (v / 1e7).toFixed(1) + 'Cr';
+            if (v >= 1e5) return (v / 1e5).toFixed(1) + 'L';
+            if (v >= 1e3) return (v / 1e3).toFixed(1) + 'K';
+            return v.toString();
+        }
+
+        // ─── Toast ────────────────────────────────────────────────────────────────────
+        let toastTimer;
+        function toast(msg) {
+            const el = document.getElementById('toast');
+            el.textContent = msg;
+            el.classList.add('show');
+            clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
+        }
+
+        // ─── Subscribe action ─────────────────────────────────────────────────────────
+        async function subscribe() {
+            const sym = document.getElementById('sym-input').value.trim().toUpperCase() || 'NSE:26009';
+            currentSymbol = sym;
+            const tf = currentTF;
+            const inds = buildIndicatorList();
+
+            clearAllSeries();
+            indLatest = {};
+
+            // Load history first, then connect WebSocket
+            await loadHistory(sym, tf, inds.filter(i => i.type !== 'rsi'));
+            connectWS(sym, tf, inds);
+        }
+
+        // ─── Boot ─────────────────────────────────────────────────────────────────────
+        initCharts();
+
+        // TF tab click
+        document.getElementById('tf-group').addEventListener('click', (e) => {
+            const btn = e.target.closest('.tf-btn');
+            if (!btn) return;
+            document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            currentTF = parseInt(btn.dataset.tf);
+        });
+
+        // Subscribe button
+        document.getElementById('sub-btn').addEventListener('click', subscribe);
+
+        // Enter key in symbol input
+        document.getElementById('sym-input').addEventListener('keydown', e => {
+            if (e.key === 'Enter') subscribe();
+        });
+
+        // Auto-subscribe on load
+        window.addEventListener('load', () => {
+            setTimeout(subscribe, 200);
+        });
+    </script>
+</body>
+
+</html>

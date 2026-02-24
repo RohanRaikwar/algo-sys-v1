@@ -1,0 +1,193 @@
+.section {
+    margin-bottom: 32px;
+}
+
+.sectionTitle {
+    font-size: 0.82rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--text-muted);
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.sectionTitle::before {
+    content: '';
+    width: 3px;
+    height: 14px;
+    border-radius: 2px;
+    background: var(--accent);
+}
+
+.grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 16px;
+}
+
+.card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px 22px;
+    backdrop-filter: blur(16px);
+    transition: var(--transition);
+    position: relative;
+    overflow: hidden;
+}
+
+.card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--cyan), transparent);
+    opacity: 0;
+    transition: var(--transition);
+}
+
+.card:hover::before {
+    opacity: 1;
+}
+
+.card:hover {
+    border-color: var(--border-hover);
+    transform: translateY(-2px);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, .3);
+}
+
+.cardTitle {
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    color: var(--text-muted);
+    margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.ringWrap {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+}
+
+.ringSvg {
+    width: 80px;
+    height: 80px;
+    flex-shrink: 0;
+}
+
+.ringBg {
+    fill: none;
+    stroke: rgba(255, 255, 255, .07);
+    stroke-width: 8;
+}
+
+.ringFill {
+    fill: none;
+    stroke-width: 8;
+    stroke-linecap: round;
+    transform-origin: center;
+    transform: rotate(-90deg);
+    transition: stroke-dashoffset 1s cubic-bezier(.4, 0, .2, 1), stroke .5s;
+}
+
+.ringStats {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.ringPercent {
+    font-family: var(--mono);
+    font-size: 1.6rem;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+}
+
+.detail {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    font-family: var(--mono);
+}
+
+.loadRow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 6px;
+}
+
+.loadLabel {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    width: 22px;
+}
+
+.loadBarWrap {
+    flex: 1;
+    height: 6px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.loadBarFill {
+    height: 100%;
+    border-radius: 999px;
+    transition: width 0.8s cubic-bezier(.4, 0, .2, 1), background 0.5s;
+}
+
+.loadVal {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    font-weight: 600;
+    width: 36px;
+    text-align: right;
+}
+
+.delayVal {
+    font-family: var(--mono);
+    font-size: 2.2rem;
+    font-weight: 700;
+    letter-spacing: -1px;
+    transition: color 0.4s;
+}
+
+.delayUnit {
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    margin-left: 2px;
+}
+
+.procList {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.procRow {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.procKey {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+}
+
+.procVal {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
