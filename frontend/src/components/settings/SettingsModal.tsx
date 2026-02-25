@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAppStore } from '../../store/useAppStore';
+import { useCandleStore } from '../../store/useCandleStore';
 import { saveActiveConfig } from '../../services/api';
+import { sendSubscribe } from '../../hooks/useWebSocket';
 import { tfLabel, getIndColor, SMA_PALETTE, EMA_PALETTE, SMMA_PALETTE, getEntryColor } from '../../utils/helpers';
 import type { IndicatorEntry } from '../../types/api';
 import styles from './Settings.module.css';
@@ -11,20 +13,20 @@ interface Props {
 }
 
 export function SettingsModal({ open, onClose }: Props) {
-    const { config, activeEntries, setActiveEntries } = useAppStore();
+    const { config, selectedTF, activeEntriesByTF, setActiveEntriesForTF } = useAppStore();
+    const currentEntries = activeEntriesByTF[selectedTF] || [];
+
     const [draft, setDraft] = useState<IndicatorEntry[]>([]);
     const [indType, setIndType] = useState('SMA');
     const [period, setPeriod] = useState('');
-    const [tfAdd, setTfAdd] = useState(config.tfs[0] || 60);
     const [color, setColor] = useState('#6366f1');
 
-    // Sync draft with active entries when opening
+    // Sync draft with entries for the selected TF when opening
     useEffect(() => {
         if (open) {
-            setDraft(activeEntries.map((e) => ({ ...e })));
-            setTfAdd(config.tfs[0] || 60);
+            setDraft(currentEntries.map((e) => ({ ...e })));
         }
-    }, [open, activeEntries, config.tfs]);
+    }, [open, selectedTF]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // ESC key
     useEffect(() => {
@@ -41,36 +43,50 @@ export function SettingsModal({ open, onClose }: Props) {
         const p = parseInt(period);
         if (!p || p < 2 || p > 500) return;
         const name = indType + '_' + p;
-        const exists = draft.some((e) => e.name === name && e.tf === tfAdd);
+        // All entries are for the current TF
+        const exists = draft.some((e) => e.name === name);
         if (exists) return;
-        setDraft((d) => [...d, { name, tf: tfAdd, color }]);
+        setDraft((d) => [...d, { name, tf: selectedTF, color }]);
         setPeriod('');
         const palettes = [...SMA_PALETTE, ...EMA_PALETTE, ...SMMA_PALETTE];
         setColor(palettes[(draft.length + 1) % palettes.length]);
-    }, [indType, period, tfAdd, color, draft]);
+    }, [indType, period, selectedTF, color, draft]);
 
     const handleApply = useCallback(async () => {
         try {
-            await saveActiveConfig(draft);
-            setActiveEntries(draft);
+            // Ensure all draft entries have the correct TF
+            const entries = draft.map((e) => ({ ...e, tf: selectedTF }));
+            // Save per-TF config to backend
+            const allProfiles = { ...activeEntriesByTF, [selectedTF]: entries };
+            await saveActiveConfig(allProfiles);
+
+            // Clear removed indicator data from candle store immediately
+            // This prevents stale indicator lines from flickering during re-subscribe
+            const keepNames = entries.map(e => e.name);
+            useCandleStore.getState().clearIndicatorsForTF(selectedTF, keepNames);
+
+            setActiveEntriesForTF(selectedTF, entries);
+
+            // Re-subscribe with updated indicator profile via WS
+            const token = useAppStore.getState().selectedToken;
+            if (token && entries.length > 0) {
+                sendSubscribe(token, selectedTF, entries);
+            }
+
             onClose();
         } catch (e) {
             console.error('[settings] save error:', e);
             alert('Failed to save settings.');
         }
-    }, [draft, setActiveEntries, onClose]);
+    }, [draft, selectedTF, activeEntriesByTF, setActiveEntriesForTF, onClose]);
 
     const handleReset = useCallback(() => {
-        const tf = config.tfs[0] || 60;
         const serverInds = (config.indicators || []).filter((n) => !n.startsWith('RSI'));
-        setDraft(serverInds.map((name) => ({ name, tf, color: getIndColor(name) })));
-    }, [config]);
+        setDraft(serverInds.map((name) => ({ name, tf: selectedTF, color: getIndColor(name) })));
+    }, [config, selectedTF]);
 
     // Sort draft
-    const sorted = [...draft].sort((a, b) => {
-        if (a.name !== b.name) return a.name.localeCompare(b.name);
-        return a.tf - b.tf;
-    });
+    const sorted = [...draft].sort((a, b) => a.name.localeCompare(b.name));
 
     return (
         <div
@@ -79,16 +95,21 @@ export function SettingsModal({ open, onClose }: Props) {
         >
             <div className={styles.modal}>
                 <div className={styles.header}>
-                    <span className={styles.title}>⚡ Indicator Settings</span>
+                    <span className={styles.title}>⚡ Indicator Settings — {tfLabel(selectedTF)}</span>
                     <button className={styles.closeBtn} onClick={onClose}>✕</button>
                 </div>
 
                 <div className={styles.body}>
-                    {/* Active Indicators */}
+                    {/* Active Indicators for this TF */}
                     <div className={styles.section}>
                         <div className={styles.sectionTitle}>
-                            <span>📊</span> Active Indicators
+                            <span>📊</span> Active Indicators for {tfLabel(selectedTF)}
                         </div>
+                        {sorted.length === 0 && (
+                            <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.85rem', padding: '8px 0' }}>
+                                No indicators configured for {tfLabel(selectedTF)}. Add one below.
+                            </div>
+                        )}
                         <div className={styles.pillList}>
                             {sorted.map((entry, idx) => {
                                 const type = entry.name.startsWith('SMA')
@@ -101,9 +122,9 @@ export function SettingsModal({ open, onClose }: Props) {
                                 const dotColor = getEntryColor(entry);
                                 const realIdx = draft.indexOf(entry);
                                 return (
-                                    <span key={`${entry.name}-${entry.tf}-${idx}`} className={`${styles.pill} ${type}`}>
+                                    <span key={`${entry.name}-${idx}`} className={`${styles.pill} ${type}`}>
                                         <span className={styles.pillDot} style={{ background: dotColor }} />
-                                        {entry.name} · {tfLabel(entry.tf)}
+                                        {entry.name}
                                         <button className={styles.pillRemove} onClick={() => removeEntry(realIdx)}>✕</button>
                                     </span>
                                 );
@@ -130,11 +151,6 @@ export function SettingsModal({ open, onClose }: Props) {
                                 onChange={(e) => setPeriod(e.target.value)}
                                 onKeyDown={(e) => { if (e.key === 'Enter') addEntry(); }}
                             />
-                            <select className={styles.input} style={{ width: 85 }} value={tfAdd} onChange={(e) => setTfAdd(parseInt(e.target.value))}>
-                                {config.tfs.map((tf) => (
-                                    <option key={tf} value={tf}>{tfLabel(tf)}</option>
-                                ))}
-                            </select>
                             <input
                                 type="color"
                                 className={styles.colorPick}

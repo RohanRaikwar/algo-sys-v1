@@ -16,7 +16,7 @@ const queryClient = new QueryClient({
 });
 
 function Dashboard() {
-    const { setConfig, setSelectedToken, setSelectedTF, setActiveEntries } = useAppStore();
+    const { setConfig, setSelectedToken, setSelectedTF, setAllActiveEntries, setActiveEntriesForTF } = useAppStore();
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [ready, setReady] = useState(false);
 
@@ -32,19 +32,23 @@ function Dashboard() {
                 if (cfg.tokens.length > 0) setSelectedToken(cfg.tokens[0]);
                 if (cfg.tfs.length > 0) setSelectedTF(cfg.tfs[0]);
 
-                // Load active indicator config
+                // Load active indicator config (per-TF)
                 try {
-                    const saved = await fetchActiveConfig();
-                    if (saved?.entries?.length > 0) {
-                        setActiveEntries(saved.entries);
+                    const byTF = await fetchActiveConfig();
+                    const hasSome = Object.values(byTF).some(arr => arr.length > 0);
+                    if (hasSome) {
+                        setAllActiveEntries(byTF);
                     } else {
                         throw new Error('empty');
                     }
                 } catch {
-                    // Auto-populate from server config
-                    const defaultTF = cfg.tfs[0] || 60;
+                    // Auto-populate: same indicators for each TF from server config
                     const serverInds = (cfg.indicators || []).filter((n) => !n.startsWith('RSI'));
-                    setActiveEntries(serverInds.map((name) => ({ name, tf: defaultTF })));
+                    const byTF: Record<number, { name: string; tf: number }[]> = {};
+                    for (const tf of cfg.tfs) {
+                        byTF[tf] = serverInds.map((name) => ({ name, tf }));
+                    }
+                    setAllActiveEntries(byTF);
                 }
 
                 setReady(true);

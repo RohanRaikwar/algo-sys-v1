@@ -29,6 +29,12 @@ interface CandleStore {
     updateIndicator: (key: string, name: string, tf: number, value: number, ts: string, ready: boolean, live: boolean, exchange: string, token: string) => void;
     setIndicatorHistory: (key: string, name: string, tf: number, history: Array<{ time: number; value: number }>, exchange?: string, token?: string) => void;
     mergeIndicatorHistory: (key: string, points: Array<{ time: number; value: number }>) => void;
+
+    // Snapshot: bulk set candles + indicators from WS SNAPSHOT
+    setSnapshot: (tf: number, candles: CandleRaw[], indicators: Record<string, Array<{ time: number; value: number }>>, token: string, exchange: string) => void;
+
+    // Cleanup: remove indicator entries for a TF that are not in keepNames
+    clearIndicatorsForTF: (tf: number, keepNames: string[]) => void;
 }
 
 export const useCandleStore = create<CandleStore>((set) => ({
@@ -210,4 +216,43 @@ export const useCandleStore = create<CandleStore>((set) => ({
             },
         };
     }),
+
+    // Bulk set candles + indicators from WS SNAPSHOT
+    setSnapshot: (tf, candles, indicators, token, exchange) => set((s) => {
+        const newIndicators = { ...s.indicators };
+        for (const [name, history] of Object.entries(indicators)) {
+            const key = `${name}:${tf}`;
+            newIndicators[key] = {
+                name,
+                tf,
+                value: history.length > 0 ? history[history.length - 1].value : null,
+                prevValue: null,
+                ts: null,
+                ready: history.length > 0,
+                history,
+                liveValue: null,
+                liveTime: null,
+                exchange,
+                token,
+            };
+        }
+        return {
+            candles: { ...s.candles, [tf]: candles },
+            indicators: newIndicators,
+        };
+    }),
+
+    // Remove indicator entries for a given TF not in keepNames
+    clearIndicatorsForTF: (tf, keepNames) => set((s) => {
+        const keep = new Set(keepNames.map(n => `${n}:${tf}`));
+        const newIndicators: Record<string, IndicatorState> = {};
+        for (const [key, val] of Object.entries(s.indicators)) {
+            // Keep if not for this TF, or if in the keep set
+            if (val.tf !== tf || keep.has(key)) {
+                newIndicators[key] = val;
+            }
+        }
+        return { indicators: newIndicators };
+    }),
 }));
+

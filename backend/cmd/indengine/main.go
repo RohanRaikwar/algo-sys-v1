@@ -129,10 +129,13 @@ func main() {
 	}
 
 	// ---- Step 1b: Backfill from SQLite to warm up cold indicators ----
+	// Write indicator results to Redis during backfill so SNAPSHOT has full history
 	if sqlReader != nil {
-		backfilled := restorer.BackfillFromSQLite(engine, sqlReader)
+		backfilled := restorer.BackfillFromSQLite(engine, sqlReader, func(results []model.IndicatorResult) {
+			redisWriter.WriteIndicatorBatch(ctx, results)
+		})
 		if backfilled > 0 {
-			log.Printf("[indengine] warmed up indicators with %d historical candles", backfilled)
+			log.Printf("[indengine] warmed up indicators with %d historical candles (results written to Redis)", backfilled)
 		}
 	}
 
@@ -153,7 +156,41 @@ func main() {
 	}
 	log.Printf("[indengine] consuming from %d streams: %v", len(streams), streams)
 
+	// ---- Step 2b: Backfill indicator history from Redis candle streams ----
+	// This reads ALL historical candles from Redis, processes them through the engine,
+	// and writes indicator results to Redis indicator streams.
+	// This ensures the SNAPSHOT has full indicator history.
+	{
+		backfillCh := make(chan model.TFCandle, 5000)
+		go func() {
+			for _, stream := range streams {
+				_, err := redisReader.ReplayFromID(ctx, stream, "0", backfillCh)
+				if err != nil {
+					log.Printf("[indengine] backfill error on %s: %v", stream, err)
+				}
+			}
+			close(backfillCh)
+		}()
+
+		backfillCount := 0
+		for tfc := range backfillCh {
+			if !tfc.Forming {
+				results := engine.Process(tfc)
+				if len(results) > 0 {
+					redisWriter.WriteIndicatorBatch(ctx, results)
+				}
+				backfillCount++
+			}
+		}
+		if backfillCount > 0 {
+			log.Printf("[indengine] ✅ backfilled %d candles from Redis streams (indicator results written)", backfillCount)
+		} else {
+			log.Println("[indengine] no candles in Redis streams to backfill from")
+		}
+	}
+
 	// ---- Step 3: Replay delta if we have a snapshot ----
+	// (This handles candles that arrived between snapshot creation and stream backfill)
 	if snap != nil && snap.StreamID != "" {
 		log.Printf("[indengine] replaying delta from stream ID: %s", snap.StreamID)
 		replayCh := make(chan model.TFCandle, 5000)
@@ -170,11 +207,14 @@ func main() {
 		deltaCount := 0
 		for tfc := range replayCh {
 			if !tfc.Forming {
-				engine.Process(tfc)
+				results := engine.Process(tfc)
+				if len(results) > 0 {
+					redisWriter.WriteIndicatorBatch(ctx, results)
+				}
 				deltaCount++
 			}
 		}
-		log.Printf("[indengine] ✅ replayed %d delta candles", deltaCount)
+		log.Printf("[indengine] ✅ replayed %d delta candles (results written to Redis)", deltaCount)
 	}
 
 	// ---- Step 4: Ensure consumer groups exist ----
@@ -334,10 +374,33 @@ func main() {
 		}
 		preserved, created := engine.ReloadConfigs(newConfigs)
 		log.Printf("[indengine] reloaded: preserved=%d, created=%d", preserved, created)
-		// Backfill new indicators from SQLite
-		if created > 0 && sqlReader != nil {
-			newRestorer := indicator.NewRestorer(newConfigs)
-			newRestorer.BackfillFromSQLite(engine, sqlReader)
+
+		// Backfill new indicators from Redis candle streams
+		// This replays ALL historical candles through the engine so new
+		// indicators get warmed up with real data
+		if created > 0 {
+			backfillCh := make(chan model.TFCandle, 5000)
+			go func() {
+				for _, stream := range streams {
+					_, err := redisReader.ReplayFromID(ctx, stream, "0", backfillCh)
+					if err != nil {
+						log.Printf("[indengine] reload backfill error on %s: %v", stream, err)
+					}
+				}
+				close(backfillCh)
+			}()
+
+			backfillCount := 0
+			for tfc := range backfillCh {
+				if !tfc.Forming {
+					results := engine.Process(tfc)
+					if len(results) > 0 {
+						redisWriter.WriteIndicatorBatch(ctx, results)
+					}
+					backfillCount++
+				}
+			}
+			log.Printf("[indengine] ✅ reload backfill: processed %d candles for new indicators", backfillCount)
 		}
 	}
 

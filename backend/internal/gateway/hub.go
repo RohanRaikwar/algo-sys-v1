@@ -49,6 +49,13 @@ type latestEntry struct {
 
 // NewHub creates a new Hub for managing WS clients and PubSub.
 func NewHub(rdb *goredis.Client, tfs []int, tokens, indicators []string) *Hub {
+	// Build default entries: each indicator for each TF
+	var defaultEntries []IndicatorEntry
+	for _, tf := range tfs {
+		for _, ind := range indicators {
+			defaultEntries = append(defaultEntries, IndicatorEntry{Name: ind, TF: tf})
+		}
+	}
 	return &Hub{
 		Rdb:        rdb,
 		TFs:        tfs,
@@ -57,11 +64,7 @@ func NewHub(rdb *goredis.Client, tfs []int, tokens, indicators []string) *Hub {
 		clients:    make(map[*Client]bool),
 		latest:     make(map[string]latestEntry),
 		activeConfig: ActiveConfig{
-			Entries: []IndicatorEntry{
-				{Name: "SMA_9", TF: 60},
-				{Name: "EMA_4", TF: 60},
-				{Name: "SMA_21", TF: 60},
-			},
+			Entries: defaultEntries,
 		},
 	}
 }
@@ -168,6 +171,7 @@ func (h *Hub) buildChannels() []string {
 
 // broadcast sends data to all connected WS clients.
 // OPTIMIZED: hand-crafted JSON envelope instead of json.Marshal with reflection.
+// Filtered: only sends to clients whose subscriptions match the channel.
 func (h *Hub) broadcast(channel string, data []byte) {
 	now := time.Now().UTC()
 
@@ -193,6 +197,10 @@ func (h *Hub) broadcast(channel string, data []byte) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	for client := range h.clients {
+		// Filter: only send if client is subscribed to this channel
+		if !client.matchesChannel(channel) {
+			continue
+		}
 		select {
 		case client.send <- buf:
 		default:
@@ -211,6 +219,7 @@ func (h *Hub) HandleWSRequest(conn *websocket.Conn, lastTS string) {
 		conn: conn,
 		send: make(chan []byte, 256),
 		hub:  h,
+		subs: make(map[string]*ClientSubscription),
 		filters: ClientFilters{
 			TFs:    h.TFs,
 			Tokens: h.Tokens,

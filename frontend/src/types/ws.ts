@@ -1,7 +1,7 @@
 // ── WebSocket Message Types ──
 
 export interface WSEnvelope {
-    type?: string;        // 'metrics' | 'pong' | 'config_update' | undefined
+    type?: string;        // 'metrics' | 'pong' | 'config_update' | 'SNAPSHOT' | 'LIVE' | 'ERROR'
     channel?: string;     // e.g. 'pub:candle:60s:NSE:99926000'
     data?: unknown;
     ts?: string;
@@ -13,6 +13,16 @@ export interface WSEnvelope {
     ping?: number;
     // config_update fields
     entries?: Array<{ name: string; tf: number; color?: string }>;
+    // SNAPSHOT fields
+    reqId?: string;
+    symbol?: string;
+    tf?: number;
+    candles?: SnapshotCandle[];
+    indicators?: Record<string, SnapshotIndPoint[]>;
+    // LIVE fields
+    candle?: SnapshotCandle;
+    // ERROR fields
+    error?: string;
 }
 
 export interface SystemMetrics {
@@ -72,4 +82,44 @@ export interface TickPayload {
     qty: number;
     token: string;
     exchange: string;
+}
+
+// ── SUBSCRIBE Protocol Types ──
+
+export interface SubscribeMsg {
+    type: 'SUBSCRIBE';
+    reqId: string;
+    symbol: string;
+    tf: number;
+    history: { candles: number };
+    indicators: IndicatorSpecMsg[];
+}
+
+export interface IndicatorSpecMsg {
+    id: string;      // e.g. "smma", "ema", "sma"
+    source: string;  // e.g. "close"
+    params: Record<string, number>;  // e.g. { length: 21 }
+}
+
+export interface SnapshotCandle {
+    ts: string;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume: number;
+    count?: number;
+}
+
+export interface SnapshotIndPoint {
+    ts: string;
+    value: number;
+    ready: boolean;
+}
+
+export interface UnsubscribeMsg {
+    type: 'UNSUBSCRIBE';
+    reqId: string;
+    symbol: string;
+    tf: number;
 }

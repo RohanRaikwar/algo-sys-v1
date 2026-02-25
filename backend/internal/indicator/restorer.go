@@ -64,7 +64,9 @@ func (r *Restorer) ReplayCandles(engine *Engine, candles []model.TFCandle) int {
 //
 // maxPeriod is the largest indicator period (e.g. 200 for SMA_200).
 // It reads `maxPeriod` candles per TF to ensure all indicators warm up.
-func (r *Restorer) BackfillFromSQLite(engine *Engine, reader SQLiteReader) int {
+// If onResults is non-nil, it is called with the indicator results for each candle,
+// allowing the caller to write them to Redis for history population.
+func (r *Restorer) BackfillFromSQLite(engine *Engine, reader SQLiteReader, onResults func([]model.IndicatorResult)) int {
 	if reader == nil {
 		return 0
 	}
@@ -98,7 +100,10 @@ func (r *Restorer) BackfillFromSQLite(engine *Engine, reader SQLiteReader) int {
 		fed := 0
 		for _, tfc := range candles {
 			tfc.Forming = false
-			engine.Process(tfc)
+			results := engine.Process(tfc)
+			if onResults != nil && len(results) > 0 {
+				onResults(results)
+			}
 			fed++
 		}
 		total += fed

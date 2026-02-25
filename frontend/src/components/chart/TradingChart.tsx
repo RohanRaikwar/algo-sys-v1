@@ -1,12 +1,12 @@
-import { useEffect, useRef, useCallback, useState } from 'react';
+import { useEffect, useRef, useCallback, useState, useMemo } from 'react';
 import {
     createChart, CrosshairMode, PriceScaleMode, ColorType,
     type IChartApi, type ISeriesApi, type CandlestickData, type LineData, type MouseEventParams, type LineWidth,
 } from 'lightweight-charts';
 import { useAppStore } from '../../store/useAppStore';
 import { useCandleStore } from '../../store/useCandleStore';
-import { tfLabel, IST_OFFSET, FETCH_SIZE, CHART_MAX, entryKey, getEntryColor } from '../../utils/helpers';
-import { fetchCandles, fetchIndicatorHistory } from '../../services/api';
+import { tfLabel, IST_OFFSET, CHART_MAX, entryKey, getEntryColor } from '../../utils/helpers';
+import { sendSubscribe } from '../../hooks/useWebSocket';
 import styles from './Chart.module.css';
 
 export function TradingChart() {
@@ -15,18 +15,21 @@ export function TradingChart() {
     const candleSeries = useRef<ISeriesApi<'Candlestick'> | null>(null);
     const indLineSeries = useRef<Record<string, ISeriesApi<'Line'>>>({});
     const priceMargins = useRef({ top: 0.1, bottom: 0.1 });
-    const loadingRef = useRef(false);
-    const hasMoreRef = useRef(true);
-    const oldestTSRef = useRef<string | null>(null);
     // Track last confirmed history fingerprint per indicator to skip unnecessary setData()
     const lastHistoryFingerprint = useRef<Record<string, string>>({});
+    // Track candle count for incremental vs full updates
+    const lastCandleFingerprint = useRef<string>('');
 
-    const { config, selectedToken, selectedTF, activeEntries, setSelectedTF } = useAppStore();
+    const { config, selectedToken, selectedTF, activeEntriesByTF, setSelectedTF } = useAppStore();
+    const activeEntriesRaw = activeEntriesByTF[selectedTF];
+    const activeEntries = useMemo(
+        () => activeEntriesRaw || [],
+        // Only recompute when the serialized entry keys actually change
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [JSON.stringify((activeEntriesRaw || []).map(e => entryKey(e)))]
+    );
     const candles = useCandleStore((s) => s.candles);
     const indicators = useCandleStore((s) => s.indicators);
-    const mergeCandles = useCandleStore((s) => s.mergeCandles);
-    const setIndicatorHistory = useCandleStore((s) => s.setIndicatorHistory);
-    const mergeIndicatorHistory = useCandleStore((s) => s.mergeIndicatorHistory);
 
     const [ohlcData, setOhlcData] = useState<{ open: number; high: number; low: number; close: number } | null>(null);
     const [indValues, setIndValues] = useState<Array<{ key: string; label: string; value: number; color: string }>>([]);
@@ -105,23 +108,14 @@ export function TradingChart() {
                 }
                 if (val !== null) {
                     const parts = compositeKey.split(':');
-                    const activeConfig = useAppStore.getState().activeEntries;
-                    const entry = activeConfig.find((e) => entryKey(e) === compositeKey);
+                    const activeState = useAppStore.getState();
+                    const activeConfig = activeState.activeEntriesByTF[activeState.selectedTF] || [];
+                    const entry = activeConfig.find((e: { name: string; tf: number }) => entryKey(e) === compositeKey);
                     const color = entry ? getEntryColor(entry) : '#6366f1';
                     vals.push({ key: compositeKey, label: `${parts[0]}(${tfLabel(parseInt(parts[1]) || 0)})`, value: val, color });
                 }
             }
             setIndValues(vals);
-        });
-
-        // Lazy scroll loading
-        let scrollDebounce: ReturnType<typeof setTimeout> | null = null;
-        chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
-            if (!range || loadingRef.current || !hasMoreRef.current) return;
-            if (range.from <= 5) {
-                if (scrollDebounce) clearTimeout(scrollDebounce);
-                scrollDebounce = setTimeout(() => fetchOlderData(), 300);
-            }
         });
 
         // Y-axis wheel zoom
@@ -162,99 +156,33 @@ export function TradingChart() {
         };
     }, []);
 
-    // Fetch older data on scroll
-    const fetchOlderData = useCallback(async () => {
-        if (loadingRef.current || !hasMoreRef.current) return;
-        loadingRef.current = true;
-        try {
-            const before = oldestTSRef.current;
-            if (!before) { loadingRef.current = false; return; }
-            const tf = selectedTF || 60;
-            const token = selectedToken || '';
-
-            const candleData = await fetchCandles(tf, token, FETCH_SIZE, before);
-            if (candleData.length === 0) { hasMoreRef.current = false; loadingRef.current = false; return; }
-
-            // Price-proximity filter
-            const refPrice = candleData[candleData.length - 1].close;
-            const threshold = refPrice * 0.20;
-            const filtered = candleData.filter(c => c.ts && Math.abs(c.close - refPrice) <= threshold);
-
-            mergeCandles(tf, filtered.map(c => ({
-                ts: c.ts, open: c.open, high: c.high, low: c.low, close: c.close,
-                volume: c.volume, count: c.count, forming: c.forming,
-                exchange: c.exchange, token: c.token,
-            })));
-
-            if (filtered.length > 0 && (!oldestTSRef.current || filtered[0].ts < oldestTSRef.current)) {
-                oldestTSRef.current = filtered[0].ts;
-            }
-
-            // Also fetch older indicators
-            const entries = activeEntries.filter(e => e.tf === tf && !e.name.startsWith('RSI'));
-            await Promise.all(entries.map(async (entry) => {
-                try {
-                    const points = await fetchIndicatorHistory(entry.name, tf, token, FETCH_SIZE, before);
-                    if (points.length === 0) return;
-                    const fullKey = entryKey(entry);
-                    const newPts = points.filter(p => p.ts && p.value !== undefined).map(p => ({
-                        time: Math.floor(new Date(p.ts).getTime() / 1000) + IST_OFFSET, value: p.value,
-                    }));
-                    mergeIndicatorHistory(fullKey, newPts);
-                } catch { /* ignore */ }
-            }));
-        } catch (e) {
-            console.warn('[fetchOlderData] error:', e);
-        } finally {
-            loadingRef.current = false;
-        }
-    }, [selectedTF, selectedToken, activeEntries, mergeCandles, mergeIndicatorHistory]);
-
-    // Load initial historical data
+    // Re-subscribe via WS when TF, token, or active entries change
+    const prevTFRef = useRef<number>(0);
+    const prevTokenRef = useRef<string>('');
+    const prevEntriesRef = useRef<string[]>([]);
     useEffect(() => {
-        hasMoreRef.current = true;
-        oldestTSRef.current = null;
-
         const tf = selectedTF || 60;
         const token = selectedToken || '';
 
-        (async () => {
-            try {
-                const candleData = await fetchCandles(tf, token, FETCH_SIZE);
-                if (candleData.length === 0) return;
+        const tfOrTokenChanged = tf !== prevTFRef.current || token !== prevTokenRef.current;
+        const currentKeys = activeEntries.map(e => entryKey(e));
+        const prevKeys = new Set(prevEntriesRef.current);
+        const entriesChanged = currentKeys.length !== prevEntriesRef.current.length ||
+            currentKeys.some(k => !prevKeys.has(k));
 
-                const filtered = candleData.filter(c => c.ts);
-                if (filtered.length === 0) return;
+        prevTFRef.current = tf;
+        prevTokenRef.current = token;
+        prevEntriesRef.current = currentKeys;
 
-                mergeCandles(tf, filtered.map(c => ({
-                    ts: c.ts, open: c.open, high: c.high, low: c.low, close: c.close,
-                    volume: c.volume, count: c.count, forming: c.forming,
-                    exchange: c.exchange, token: c.token,
-                })));
-                oldestTSRef.current = filtered[0].ts;
+        // Only re-subscribe if something meaningful changed
+        if (!tfOrTokenChanged && !entriesChanged) return;
 
-                // Compute earliest candle time so indicator lines don't extend beyond candle range
-                const earliestCandleTime = Math.floor(new Date(filtered[0].ts).getTime() / 1000) + IST_OFFSET;
-
-                // Load indicator history for all active entries
-                const allEntries = activeEntries.filter(e => !e.name.startsWith('RSI'));
-                await Promise.all(allEntries.map(async (entry) => {
-                    try {
-                        const points = await fetchIndicatorHistory(entry.name, entry.tf, token, FETCH_SIZE);
-                        if (points.length === 0) return;
-                        const fullKey = entryKey(entry);
-                        const allPts = points.filter(p => p.ts && p.value !== undefined).map(p => ({
-                            time: Math.floor(new Date(p.ts).getTime() / 1000) + IST_OFFSET, value: p.value,
-                        }));
-                        const newHistory = allPts.filter(h => h.time >= earliestCandleTime);
-                        setIndicatorHistory(fullKey, entry.name, entry.tf, newHistory);
-                    } catch { /* ignore */ }
-                }));
-            } catch (e) { console.warn('[loadHistorical] error:', e); }
-        })();
+        if (token && activeEntries.length > 0) {
+            sendSubscribe(token, tf, activeEntries);
+        }
     }, [selectedTF, selectedToken, activeEntries]);
 
-    // Update chart candles
+    // Update chart candles — uses incremental update() when possible, full setData() only when structure changes
     useEffect(() => {
         if (!chartApi.current || !candleSeries.current) return;
         const tf = selectedTF || 60;
@@ -270,16 +198,27 @@ export function TradingChart() {
             })
             .sort((a, b) => a.time - b.time);
 
-
-
         // Deduplicate by timestamp (lightweight-charts requires strictly ascending times)
-        if (data.length > 0) {
-            const seen = new Map<number, typeof data[0]>();
-            for (const d of data) {
-                seen.set(d.time, d); // last-write-wins for same timestamp
-            }
-            data = Array.from(seen.values()).sort((a, b) => a.time - b.time);
+        if (data.length === 0) return;
+        const seen = new Map<number, typeof data[0]>();
+        for (const d of data) {
+            seen.set(d.time, d); // last-write-wins for same timestamp
+        }
+        data = Array.from(seen.values()).sort((a, b) => a.time - b.time);
+
+        // Build a fingerprint based on count + first candle time to detect structural changes
+        // (new candle added, TF changed, snapshot received, etc.)
+        const firstTime = data[0].time;
+        const fingerprint = `${data.length}:${firstTime}:${tf}`;
+
+        if (fingerprint !== lastCandleFingerprint.current) {
+            // Structure changed (new candle count, TF switch, snapshot) → full setData()
             candleSeries.current.setData(data as CandlestickData[]);
+            lastCandleFingerprint.current = fingerprint;
+        } else {
+            // Same structure, just a tick update on the last candle → efficient update()
+            const last = data[data.length - 1];
+            candleSeries.current.update(last as CandlestickData);
         }
     }, [candles, selectedTF, selectedToken]);
 
@@ -298,10 +237,23 @@ export function TradingChart() {
             }
         }
 
-        // Get reference price
+        // Compute candle price band for filtering warmup artifacts
         const raw = candles[chartTF];
-        let candleRefPrice = 0;
-        if (raw && raw.length > 0) candleRefPrice = raw[0].close / 100;
+        let bandLo = 0, bandHi = Infinity;
+        if (raw && raw.length > 0) {
+            bandLo = Infinity;
+            bandHi = 0;
+            for (const c of raw) {
+                const lo = c.low / 100;
+                const hi = c.high / 100;
+                if (lo < bandLo) bandLo = lo;
+                if (hi > bandHi) bandHi = hi;
+            }
+            // Add 5% margin to the band
+            const margin = (bandHi - bandLo) * 0.05;
+            bandLo -= margin;
+            bandHi += margin;
+        }
 
         for (const entry of activeEntries) {
             if (entry.name.startsWith('RSI')) continue;
@@ -309,12 +261,12 @@ export function TradingChart() {
             const ind = indicators[compositeKey];
             if (!ind || !ind.history || ind.history.length === 0) continue;
 
-            let allPts = ind.history.filter(h => h.time && h.value !== undefined);
-            if (allPts.length === 0) continue;
-
-            const refVal = candleRefPrice > 0 ? candleRefPrice : allPts[allPts.length - 1].value;
-            const tol = refVal * 0.10;
-            let lineData = allPts.filter(h => Math.abs(h.value - refVal) <= tol);
+            // Filter warmup artifacts: keep only points within the candle price band
+            let lineData = ind.history.filter(h =>
+                h.time && h.value !== undefined && h.value > 0 &&
+                h.value >= bandLo && h.value <= bandHi
+            );
+            if (lineData.length === 0) continue;
 
             // Resample finer TF
             if (entry.tf < chartTF && lineData.length > 0) {
@@ -359,7 +311,8 @@ export function TradingChart() {
             }
 
             // Live peek value → efficient update() (no full redraw)
-            if (ind.liveValue !== null && ind.liveTime !== null) {
+            if (ind.liveValue !== null && ind.liveTime !== null &&
+                ind.liveValue >= bandLo && ind.liveValue <= bandHi) {
                 const lastConfirmedTime = lineData[lineData.length - 1].time;
                 const liveT = ind.liveTime >= lastConfirmedTime ? ind.liveTime : lastConfirmedTime;
                 indLineSeries.current[compositeKey].update({
