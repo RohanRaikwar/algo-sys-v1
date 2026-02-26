@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -93,7 +94,7 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
 	// ---- Start SQLite writer (off hot path) ----
-	os.MkdirAll("data", 0o755)
+	os.MkdirAll(filepath.Dir(sqlitePath), 0o755)
 	sqlWriter, err := sqlitestore.New(sqlitestore.WriterConfig{DBPath: sqlitePath})
 	if err != nil {
 		log.Fatalf("[mdengine] sqlite init failed: %v", err)

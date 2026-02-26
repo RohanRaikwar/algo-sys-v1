@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"trading-systemv1/internal/model"
 )
 
 // Snapshottable is implemented by indicators that support state serialization.
@@ -127,7 +128,7 @@ func RestoreEngine(configs []TFIndicatorConfig, snap *EngineSnapshot) (*Engine, 
 		// Build a lookup: "SMA:9" → IndicatorSnapshot for fast matching
 		snapLookup := make(map[string]IndicatorSnapshot, len(ts.Indicators))
 		for _, indSnap := range ts.Indicators {
-			lookupKey := indSnap.Type + ":" + itoaInd(indSnap.Period)
+			lookupKey := indSnap.Type + ":" + model.Itoa(indSnap.Period)
 			snapLookup[lookupKey] = indSnap
 		}
 
@@ -135,7 +136,7 @@ func RestoreEngine(configs []TFIndicatorConfig, snap *EngineSnapshot) (*Engine, 
 		restored, cold := 0, 0
 		for i, ind := range ti.indicators {
 			cfg := ti.configs[i]
-			lookupKey := cfg.Type + ":" + itoaInd(cfg.Period)
+			lookupKey := cfg.Type + ":" + model.Itoa(cfg.Period)
 
 			indSnap, found := snapLookup[lookupKey]
 			if !found {

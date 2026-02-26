@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"strconv"
 	"sync"
 	"time"
 
@@ -28,6 +27,10 @@ type IndicatorEntry struct {
 }
 
 // Hub manages WebSocket clients and Redis PubSub fan-out.
+// It acts as a compositor, delegating to focused components:
+//   - PubSubRouter: Redis subscription + message routing
+//   - Broadcaster: envelope construction + client-filtered fan-out
+//   - ConfigStore: active indicator config CRUD + broadcast
 type Hub struct {
 	Rdb        *goredis.Client
 	TFs        []int
@@ -39,63 +42,65 @@ type Hub struct {
 	latest  map[string]latestEntry
 	seq     int64
 
+	// Per-channel monotonic sequence numbers for gap detection
+	channelSeqs map[string]int64
+
+	// Per-channel replay buffers for gap backfill
+	replayBufs map[string]*ReplayBuffer
+
 	activeConfig ActiveConfig
+
+	// End-to-end latency tracker (Point 8)
+	Latency *LatencyTracker
+
+	// Sub-components
+	Router      *PubSubRouter
+	Broadcaster *Broadcaster
+	ConfigStore *ConfigStore
 }
 
 type latestEntry struct {
 	Data json.RawMessage
 	TS   time.Time
+	Seq  int64 // per-channel seq for gap detection
 }
 
 // NewHub creates a new Hub for managing WS clients and PubSub.
 func NewHub(rdb *goredis.Client, tfs []int, tokens, indicators []string) *Hub {
-	// Build default entries: each indicator for each TF
-	var defaultEntries []IndicatorEntry
-	for _, tf := range tfs {
-		for _, ind := range indicators {
-			defaultEntries = append(defaultEntries, IndicatorEntry{Name: ind, TF: tf})
-		}
-	}
-	return &Hub{
-		Rdb:        rdb,
-		TFs:        tfs,
-		Tokens:     tokens,
-		Indicators: indicators,
-		clients:    make(map[*Client]bool),
-		latest:     make(map[string]latestEntry),
+	// Start with empty active config — indicators are added dynamically by the frontend
+	h := &Hub{
+		Rdb:         rdb,
+		TFs:         tfs,
+		Tokens:      tokens,
+		Indicators:  indicators,
+		clients:     make(map[*Client]bool),
+		latest:      make(map[string]latestEntry),
+		channelSeqs: make(map[string]int64),
+		replayBufs:  make(map[string]*ReplayBuffer),
+		Latency:     NewLatencyTracker(10000), // 10k sample ring buffer
 		activeConfig: ActiveConfig{
-			Entries: defaultEntries,
+			Entries: []IndicatorEntry{},
 		},
 	}
+	// Wire sub-components
+	h.Router = NewPubSubRouter(h)
+	h.Broadcaster = NewBroadcaster(h)
+	h.ConfigStore = NewConfigStore(h, rdb)
+
+	// Restore active config from Redis (if previously persisted)
+	h.ConfigStore.Load(context.Background())
+
+	return h
 }
 
-// GetActiveConfig returns the current indicator display config.
+// GetActiveConfig delegates to ConfigStore.
 func (h *Hub) GetActiveConfig() ActiveConfig {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	return h.activeConfig
+	return h.ConfigStore.Get()
 }
 
-// SetActiveConfig updates the active config and broadcasts to all clients.
+// SetActiveConfig delegates to ConfigStore.
 func (h *Hub) SetActiveConfig(cfg ActiveConfig) {
-	h.mu.Lock()
-	h.activeConfig = cfg
-	h.mu.Unlock()
-
-	envelope, _ := json.Marshal(map[string]interface{}{
-		"type":    "config_update",
-		"entries": cfg.Entries,
-		"ts":      time.Now().UTC().Format(time.RFC3339Nano),
-	})
-
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	for client := range h.clients {
-		select {
-		case client.send <- envelope:
-		default:
-		}
-	}
+	h.ConfigStore.Set(cfg)
 }
 
 // Run starts the PubSub subscription loop. Blocks until ctx is cancelled.
@@ -103,47 +108,12 @@ func (h *Hub) Run(ctx context.Context) {
 	channels := h.buildChannels()
 	if len(channels) == 0 {
 		log.Println("[api_gateway] WARNING: no channels to subscribe to")
-		h.runPatternSubscribe(ctx)
+		h.Router.RunPattern(ctx)
 		return
 	}
 
-	pubsub := h.Rdb.Subscribe(ctx, channels...)
-	defer pubsub.Close()
-
-	log.Printf("[api_gateway] subscribed to %d PubSub channels", len(channels))
-
-	go h.runPatternSubscribe(ctx)
-
-	ch := pubsub.Channel()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case msg, ok := <-ch:
-			if !ok {
-				return
-			}
-			h.broadcast(msg.Channel, []byte(msg.Payload))
-		}
-	}
-}
-
-func (h *Hub) runPatternSubscribe(ctx context.Context) {
-	pubsub := h.Rdb.PSubscribe(ctx, "pub:ind:*", "pub:tick:*")
-	defer pubsub.Close()
-
-	ch := pubsub.Channel()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case msg, ok := <-ch:
-			if !ok {
-				return
-			}
-			h.broadcast(msg.Channel, []byte(msg.Payload))
-		}
-	}
+	go h.Router.RunPattern(ctx)
+	h.Router.RunExplicit(ctx)
 }
 
 func (h *Hub) buildChannels() []string {
@@ -169,43 +139,9 @@ func (h *Hub) buildChannels() []string {
 	return channels
 }
 
-// broadcast sends data to all connected WS clients.
-// OPTIMIZED: hand-crafted JSON envelope instead of json.Marshal with reflection.
-// Filtered: only sends to clients whose subscriptions match the channel.
+// broadcast delegates to Broadcaster for performance-optimized fan-out.
 func (h *Hub) broadcast(channel string, data []byte) {
-	now := time.Now().UTC()
-
-	h.mu.Lock()
-	h.latest[channel] = latestEntry{Data: data, TS: now}
-	h.seq++
-	seq := h.seq
-	h.mu.Unlock()
-
-	// Hand-craft envelope JSON: ~1μs vs ~25μs for json.Marshal
-	// {"channel":"...","data":...,"ts":"...","seq":N}
-	buf := make([]byte, 0, len(channel)+len(data)+128)
-	buf = append(buf, `{"channel":"`...)
-	buf = append(buf, channel...)
-	buf = append(buf, `","data":`...)
-	buf = append(buf, data...)
-	buf = append(buf, `,"ts":"`...)
-	buf = now.AppendFormat(buf, time.RFC3339Nano)
-	buf = append(buf, `","seq":`...)
-	buf = strconv.AppendInt(buf, seq, 10)
-	buf = append(buf, '}')
-
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	for client := range h.clients {
-		// Filter: only send if client is subscribed to this channel
-		if !client.matchesChannel(channel) {
-			continue
-		}
-		select {
-		case client.send <- buf:
-		default:
-		}
-	}
+	h.Broadcaster.Broadcast(channel, data)
 }
 
 // HandleWS upgrades an HTTP connection to WebSocket and registers the client.
@@ -230,9 +166,10 @@ func (h *Hub) HandleWSRequest(conn *websocket.Conn, lastTS string) {
 
 	h.mu.Lock()
 	h.clients[client] = true
+	count := len(h.clients)
 	h.mu.Unlock()
 
-	log.Printf("[api_gateway] ws client connected (%d total)", len(h.clients))
+	log.Printf("[api_gateway] ws client connected (%d total)", count)
 
 	go client.sendInitialState(lastTS)
 	go client.writePump()
@@ -258,6 +195,30 @@ func (h *Hub) GetLatestAll() map[string]json.RawMessage {
 	return cp
 }
 
+// GetReplayRange returns buffered envelopes for a channel in [fromSeq, toSeq].
+// Used by the /api/missed REST endpoint for client gap backfill.
+func (h *Hub) GetReplayRange(channel string, fromSeq, toSeq int64) [][]byte {
+	h.mu.RLock()
+	rb, exists := h.replayBufs[channel]
+	h.mu.RUnlock()
+	if !exists {
+		return nil
+	}
+	entries := rb.Range(fromSeq, toSeq)
+	result := make([][]byte, len(entries))
+	for i, e := range entries {
+		result[i] = e.Data
+	}
+	return result
+}
+
+// GetChannelSeq returns the current sequence number for a channel.
+func (h *Hub) GetChannelSeq(channel string) int64 {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.channelSeqs[channel]
+}
+
 // ClientCount returns the number of connected WS clients.
 func (h *Hub) ClientCount() int {
 	h.mu.RLock()
@@ -278,6 +239,9 @@ func (h *Hub) StartMetricsBroadcast(ctx context.Context, start time.Time) {
 			m := CollectMetrics(start)
 			if v, ok := ReadIndicatorLatency(ctx, h.Rdb); ok {
 				m.IndicatorMs = v
+			}
+			if h.Latency != nil {
+				m.LatencyP50, m.LatencyP95, m.LatencyP99 = h.Latency.Percentiles()
 			}
 			envelope, _ := json.Marshal(map[string]interface{}{
 				"type":         "metrics",

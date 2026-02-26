@@ -30,15 +30,15 @@ func assertClose(t *testing.T, label string, got, want, tol float64) {
 // ────────────────────────────────────────────────────────────
 
 func TestSMA_Correctness_Period3(t *testing.T) {
-	// Hand-calculated SMA(3) for a known price series (in rupees):
-	// Prices: 100, 102, 104, 103, 105
-	// SMA after candle 3: (100+102+104)/3 = 102.0000
-	// SMA after candle 4: (102+104+103)/3 = 103.0000
-	// SMA after candle 5: (104+103+105)/3 = 104.0000
+	// Hand-calculated SMA(3) for a known price series (in paise):
+	// Prices: 10000, 10200, 10400, 10300, 10500
+	// SMA after candle 3: (10000+10200+10400)/3 = 10200.0
+	// SMA after candle 4: (10200+10400+10300)/3 = 10300.0
+	// SMA after candle 5: (10400+10300+10500)/3 = 10400.0
 
 	sma := NewSMA(3)
 	prices := []int64{10000, 10200, 10400, 10300, 10500} // paise
-	expected := []float64{0, 0, 102.0, 103.0, 104.0}
+	expected := []float64{0, 0, 10200.0, 10300.0, 10400.0}
 	ready := []bool{false, false, true, true, true}
 
 	for i, p := range prices {
@@ -47,20 +47,20 @@ func TestSMA_Correctness_Period3(t *testing.T) {
 			t.Errorf("candle %d: Ready()=%v, want %v", i, sma.Ready(), ready[i])
 		}
 		if ready[i] {
-			assertClose(t, "SMA(3) candle "+string(rune('0'+i)), sma.Value(), expected[i], 0.0001)
+			assertClose(t, "SMA(3) candle "+string(rune('0'+i)), sma.Value(), expected[i], 0.01)
 		}
 	}
 }
 
 func TestSMA_Correctness_Period5(t *testing.T) {
-	// Prices: 10, 11, 12, 13, 14, 15, 16
-	// SMA(5) after candle 5: (10+11+12+13+14)/5 = 12.0
-	// SMA(5) after candle 6: (11+12+13+14+15)/5 = 13.0
-	// SMA(5) after candle 7: (12+13+14+15+16)/5 = 14.0
+	// Prices (paise): 1000, 1100, 1200, 1300, 1400, 1500, 1600
+	// SMA(5) after candle 5: (1000+1100+1200+1300+1400)/5 = 1200.0
+	// SMA(5) after candle 6: (1100+1200+1300+1400+1500)/5 = 1300.0
+	// SMA(5) after candle 7: (1200+1300+1400+1500+1600)/5 = 1400.0
 
 	sma := NewSMA(5)
 	prices := []int64{1000, 1100, 1200, 1300, 1400, 1500, 1600}
-	expected := []float64{0, 0, 0, 0, 12.0, 13.0, 14.0}
+	expected := []float64{0, 0, 0, 0, 1200.0, 1300.0, 1400.0}
 	ready := []bool{false, false, false, false, true, true, true}
 
 	for i, p := range prices {
@@ -69,7 +69,7 @@ func TestSMA_Correctness_Period5(t *testing.T) {
 			t.Errorf("candle %d: Ready()=%v, want %v", i, sma.Ready(), ready[i])
 		}
 		if ready[i] {
-			assertClose(t, "SMA(5)", sma.Value(), expected[i], 0.0001)
+			assertClose(t, "SMA(5)", sma.Value(), expected[i], 0.01)
 		}
 	}
 }
@@ -91,13 +91,13 @@ func TestSMA_Peek_DoesNotMutate(t *testing.T) {
 
 func TestSMA_Peek_CorrectValue(t *testing.T) {
 	sma := NewSMA(3)
-	// Feed: 100, 102, 104 → SMA = 102
+	// Feed: 10000, 10200, 10400 → SMA = 10200
 	for _, p := range []int64{10000, 10200, 10400} {
 		sma.Update(candle(p))
 	}
-	// Peek with 106 → expected: (102+104+106)/3 = 104
+	// Peek with 10600 → expected: (10200+10400+10600)/3 = 10400
 	peekVal := sma.Peek(10600)
-	assertClose(t, "SMA Peek", peekVal, 104.0, 0.0001)
+	assertClose(t, "SMA Peek", peekVal, 10400.0, 0.01)
 }
 
 // ────────────────────────────────────────────────────────────
@@ -106,17 +106,17 @@ func TestSMA_Peek_CorrectValue(t *testing.T) {
 
 func TestEMA_Correctness_Period3(t *testing.T) {
 	// EMA(3): multiplier = 2/(3+1) = 0.5
-	// Prices (rupees): 100, 102, 104, 103, 105
+	// Prices (paise): 10000, 10200, 10400, 10300, 10500
 	//
-	// Candle 1: sum=100
-	// Candle 2: sum=202
-	// Candle 3: sum=306 → initial EMA = 306/3 = 102.0 (SMA seed)
-	// Candle 4: EMA = 103*0.5 + 102.0*0.5 = 102.5
-	// Candle 5: EMA = 105*0.5 + 102.5*0.5 = 103.75
+	// Candle 1: sum=10000
+	// Candle 2: sum=20200
+	// Candle 3: sum=30600 → initial EMA = 30600/3 = 10200.0 (SMA seed)
+	// Candle 4: EMA = 10300*0.5 + 10200.0*0.5 = 10250.0
+	// Candle 5: EMA = 10500*0.5 + 10250.0*0.5 = 10375.0
 
 	ema := NewEMA(3)
 	prices := []int64{10000, 10200, 10400, 10300, 10500}
-	expected := []float64{0, 0, 102.0, 102.5, 103.75}
+	expected := []float64{0, 0, 10200.0, 10250.0, 10375.0}
 	ready := []bool{false, false, true, true, true}
 
 	for i, p := range prices {
@@ -125,39 +125,40 @@ func TestEMA_Correctness_Period3(t *testing.T) {
 			t.Errorf("candle %d: Ready()=%v, want %v", i, ema.Ready(), ready[i])
 		}
 		if ready[i] {
-			assertClose(t, "EMA(3)", ema.Value(), expected[i], 0.0001)
+			assertClose(t, "EMA(3)", ema.Value(), expected[i], 0.01)
 		}
 	}
 }
 
 func TestEMA_Correctness_Period5(t *testing.T) {
 	// EMA(5): multiplier = 2/(5+1) = 1/3 ≈ 0.333333
-	// Prices: 44, 44.25, 44.50, 43.75, 44.50  → SMA seed = (44+44.25+44.50+43.75+44.50)/5 = 44.20
-	// Candle 6 (44.25): EMA = 44.25*(1/3) + 44.20*(2/3) = 14.75 + 29.4667 = 44.2167
-	// Candle 7 (44.00): EMA = 44.00*(1/3) + 44.2167*(2/3) = 14.6667 + 29.4778 = 44.1444
+	// Prices (paise): 4400, 4425, 4450, 4375, 4450
+	// SMA seed = (4400+4425+4450+4375+4450)/5 = 4420.0
+	// Candle 6 (4425): EMA = 4425*(1/3) + 4420*(2/3) = 4421.6667
+	// Candle 7 (4400): EMA = 4400*(1/3) + 4421.6667*(2/3) = 4414.4444
 
 	mult := 2.0 / 6.0 // 0.33333...
 	prices := []int64{4400, 4425, 4450, 4375, 4450, 4425, 4400}
 
-	// Expected seed: 44.20
-	seedExpected := (44.0 + 44.25 + 44.50 + 43.75 + 44.50) / 5.0
+	// Expected seed (paise): 4420.0
+	seedExpected := (4400.0 + 4425.0 + 4450.0 + 4375.0 + 4450.0) / 5.0
 
-	// After candle 5 (index 4): seed = 44.20
+	// After candle 5 (index 4): seed = 4420.0
 	ema2 := NewEMA(5)
 	for _, p := range prices[:5] {
 		ema2.Update(candle(p))
 	}
-	assertClose(t, "EMA(5) seed", ema2.Value(), seedExpected, 0.01)
+	assertClose(t, "EMA(5) seed", ema2.Value(), seedExpected, 1.0)
 
-	// After candle 6: EMA = 44.25 * mult + 44.20 * (1-mult)
+	// After candle 6: EMA = 4425 * mult + 4420 * (1-mult)
 	ema2.Update(candle(prices[5]))
-	expected6 := 44.25*mult + seedExpected*(1-mult)
-	assertClose(t, "EMA(5) candle 6", ema2.Value(), expected6, 0.01)
+	expected6 := 4425.0*mult + seedExpected*(1-mult)
+	assertClose(t, "EMA(5) candle 6", ema2.Value(), expected6, 1.0)
 
-	// After candle 7: EMA = 44.00 * mult + expected6 * (1-mult)
+	// After candle 7: EMA = 4400 * mult + expected6 * (1-mult)
 	ema2.Update(candle(prices[6]))
-	expected7 := 44.00*mult + expected6*(1-mult)
-	assertClose(t, "EMA(5) candle 7", ema2.Value(), expected7, 0.01)
+	expected7 := 4400.0*mult + expected6*(1-mult)
+	assertClose(t, "EMA(5) candle 7", ema2.Value(), expected7, 1.0)
 }
 
 func TestEMA_Peek_DoesNotMutate(t *testing.T) {
@@ -174,13 +175,13 @@ func TestEMA_Peek_DoesNotMutate(t *testing.T) {
 
 func TestEMA_Peek_CorrectValue(t *testing.T) {
 	ema := NewEMA(3)
-	// Seed: (100+102+104)/3 = 102.0
+	// Seed: (10000+10200+10400)/3 = 10200.0
 	for _, p := range []int64{10000, 10200, 10400} {
 		ema.Update(candle(p))
 	}
-	// Peek with 106: EMA = 106*0.5 + 102*0.5 = 104.0
+	// Peek with 10600: EMA = 10600*0.5 + 10200*0.5 = 10400.0
 	peekVal := ema.Peek(10600)
-	assertClose(t, "EMA Peek", peekVal, 104.0, 0.0001)
+	assertClose(t, "EMA Peek", peekVal, 10400.0, 0.01)
 }
 
 // ────────────────────────────────────────────────────────────
@@ -189,15 +190,15 @@ func TestEMA_Peek_CorrectValue(t *testing.T) {
 
 func TestSMMA_Correctness_Period3(t *testing.T) {
 	// SMMA(3): first value = SMA(3) seed, then Wilder smoothing
-	// Prices: 100, 102, 104, 103, 105
+	// Prices (paise): 10000, 10200, 10400, 10300, 10500
 	//
-	// Candle 1-3: seed = (100+102+104)/3 = 102.0
-	// Candle 4: SMMA = (102.0 * 2 + 103) / 3 = (204+103)/3 = 102.3333
-	// Candle 5: SMMA = (102.3333 * 2 + 105) / 3 = (204.6667+105)/3 = 103.2222
+	// Candle 1-3: seed = (10000+10200+10400)/3 = 10200.0
+	// Candle 4: SMMA = (10200.0 * 2 + 10300) / 3 = (20400+10300)/3 = 10233.3333
+	// Candle 5: SMMA = (10233.3333 * 2 + 10500) / 3 = (20466.6667+10500)/3 = 10322.2222
 
 	smma := NewSMMA(3)
 	prices := []int64{10000, 10200, 10400, 10300, 10500}
-	expected := []float64{0, 0, 102.0, 102.3333, 103.2222}
+	expected := []float64{0, 0, 10200.0, 10233.3333, 10322.2222}
 	ready := []bool{false, false, true, true, true}
 
 	for i, p := range prices {
@@ -206,7 +207,7 @@ func TestSMMA_Correctness_Period3(t *testing.T) {
 			t.Errorf("candle %d: Ready()=%v, want %v", i, smma.Ready(), ready[i])
 		}
 		if ready[i] {
-			assertClose(t, "SMMA(3)", smma.Value(), expected[i], 0.001)
+			assertClose(t, "SMMA(3)", smma.Value(), expected[i], 0.1)
 		}
 	}
 }
@@ -225,13 +226,13 @@ func TestSMMA_Peek_DoesNotMutate(t *testing.T) {
 
 func TestSMMA_Peek_CorrectValue(t *testing.T) {
 	smma := NewSMMA(3)
-	// Seed: (100+102+104)/3 = 102.0
+	// Seed: (10000+10200+10400)/3 = 10200.0
 	for _, p := range []int64{10000, 10200, 10400} {
 		smma.Update(candle(p))
 	}
-	// Peek with 106: SMMA = (102.0 * 2 + 106) / 3 = 310/3 = 103.3333
+	// Peek with 10600: SMMA = (10200.0 * 2 + 10600) / 3 = 31000/3 = 10333.3333
 	peekVal := smma.Peek(10600)
-	assertClose(t, "SMMA Peek", peekVal, 103.3333, 0.001)
+	assertClose(t, "SMMA Peek", peekVal, 10333.3333, 0.1)
 }
 
 // ────────────────────────────────────────────────────────────

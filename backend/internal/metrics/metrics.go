@@ -49,6 +49,12 @@ type Metrics struct {
 	RedisCircuitBreakerState prometheus.Gauge // 0=closed, 1=open, 2=half-open
 	RedisCircuitBreakerTrips prometheus.Counter
 	RedisBufferedWrites      prometheus.Counter
+
+	// End-to-end observability (improvement #8)
+	E2ELatency       prometheus.Histogram // tick-to-WS-emit latency
+	WatermarkDelay   prometheus.Gauge     // current watermark delay vs wall clock
+	LateTicks        prometheus.Counter   // ticks dropped behind watermark
+	ReorderBufferLen prometheus.Gauge     // current reorder buffer occupancy
 }
 
 // NewMetrics registers and returns all Prometheus metrics.
@@ -148,6 +154,25 @@ func NewMetrics() *Metrics {
 			Name: "mdengine_redis_buffered_writes_total",
 			Help: "Writes buffered locally during Redis circuit breaker open state",
 		}),
+
+		// E2E observability
+		E2ELatency: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name:    "mdengine_e2e_latency_seconds",
+			Help:    "End-to-end latency from tick ingest to WS emit",
+			Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0},
+		}),
+		WatermarkDelay: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "mdengine_watermark_delay_seconds",
+			Help: "Lag between wall-clock time and event-time watermark",
+		}),
+		LateTicks: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "mdengine_late_ticks_total",
+			Help: "Ticks dropped because they arrived behind the event-time watermark",
+		}),
+		ReorderBufferLen: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "mdengine_reorder_buffer_len",
+			Help: "Current number of candle buckets held in the reorder buffer",
+		}),
 	}
 
 	prometheus.MustRegister(
@@ -170,6 +195,10 @@ func NewMetrics() *Metrics {
 		m.RedisCircuitBreakerState,
 		m.RedisCircuitBreakerTrips,
 		m.RedisBufferedWrites,
+		m.E2ELatency,
+		m.WatermarkDelay,
+		m.LateTicks,
+		m.ReorderBufferLen,
 	)
 
 	return m

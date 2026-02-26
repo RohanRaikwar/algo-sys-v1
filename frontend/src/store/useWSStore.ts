@@ -14,6 +14,12 @@ interface WSState {
     lastUpdateTime: string | null;
     latency: number | null;
 
+    // Per-channel sequence tracking for gap detection
+    channelSeqs: Record<string, number>;
+
+    // WebSocket instance managed by the store (replaces module-level global)
+    wsRef: WebSocket | null;
+
     setConnected: (c: boolean) => void;
     incrementMsg: () => void;
     setLastMsgTS: (ts: string) => void;
@@ -23,9 +29,13 @@ interface WSState {
     setMetrics: (m: SystemMetrics) => void;
     setLastUpdateTime: (t: string) => void;
     setLatency: (l: number) => void;
+    setWsRef: (ws: WebSocket | null) => void;
+    setChannelSeq: (channel: string, seq: number) => void;
+    /** Send a message over the current WebSocket connection */
+    send: (data: string) => void;
 }
 
-export const useWSStore = create<WSState>((set) => ({
+export const useWSStore = create<WSState>((set, get) => ({
     connected: false,
     msgCount: 0,
     startTime: Date.now(),
@@ -37,6 +47,8 @@ export const useWSStore = create<WSState>((set) => ({
     metrics: null,
     lastUpdateTime: null,
     latency: null,
+    wsRef: null,
+    channelSeqs: {},
 
     setConnected: (connected) => set({ connected }),
     incrementMsg: () => set((s) => ({ msgCount: s.msgCount + 1 })),
@@ -47,4 +59,17 @@ export const useWSStore = create<WSState>((set) => ({
     setMetrics: (metrics) => set({ metrics }),
     setLastUpdateTime: (lastUpdateTime) => set({ lastUpdateTime }),
     setLatency: (latency) => set({ latency }),
+    setWsRef: (wsRef) => set({ wsRef }),
+    setChannelSeq: (channel, seq) => set((s) => ({
+        channelSeqs: { ...s.channelSeqs, [channel]: seq },
+    })),
+    send: (data) => {
+        const ws = get().wsRef;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(data);
+        } else {
+            console.warn('[ws] cannot send: not connected');
+        }
+    },
 }));
+

@@ -1,0 +1,22 @@
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  # Build STAGING services: tickserver, mdengine, indengine
+  cmd = "go build -o ./tmp/tickserver ./cmd/tickserver/ && go build -o ./tmp/mdengine ./cmd/mdengine/ && go build -o ./tmp/indengine ./cmd/indengine/ && go build -o ./tmp/api_gateway ./cmd/api_gateway/"
+  bin = "tmp/tickserver"
+  full_bin = "bash ./run_staging.sh"
+  include_ext = ["go", "toml"]
+  exclude_dir = ["tmp", "vendor", "node_modules", "data", "logs"]
+  delay = 1000
+  kill_delay = "500ms"
+  send_interrupt = true
+
+[log]
+  time = false
+
+[color]
+  main = "cyan"
+  watcher = "cyan"
+  build = "yellow"
+  runner = "green"

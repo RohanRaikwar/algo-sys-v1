@@ -60,10 +60,10 @@ export function fmtTime(ts: string): string {
     return d.toLocaleTimeString('en-IN', { hour12: false });
 }
 
+/** Format a numeric value for display. Values are expected in rupees. */
 export function fmtValue(v: number | null | undefined): string {
     if (v === undefined || v === null) return '--';
-    if (v > 1000) return (v / 100).toFixed(2);
-    return v.toFixed(4);
+    return v.toFixed(2);
 }
 
 export function fmtUptime(sec: number): string {

@@ -1,21 +1,37 @@
 import { create } from 'zustand';
 import type { AppConfig, IndicatorEntry } from '../types/api';
 
-const STORAGE_KEY = 'indicatorProfilesByTF';
+const STORAGE_KEY = 'activeIndicators_v2';
+const LEGACY_KEY = 'indicatorProfilesByTF';
 
-/** Load per-TF profiles from localStorage */
-function loadPersistedProfiles(): Record<number, IndicatorEntry[]> {
+/** Load global indicator list from localStorage */
+function loadPersistedIndicators(): IndicatorEntry[] {
     try {
+        // Try new key first
         const raw = localStorage.getItem(STORAGE_KEY);
         if (raw) return JSON.parse(raw);
+
+        // Migrate from legacy per-TF format
+        const legacy = localStorage.getItem(LEGACY_KEY);
+        if (legacy) {
+            const byTF: Record<number, IndicatorEntry[]> = JSON.parse(legacy);
+            const flat = Object.values(byTF).flat();
+            // Dedup by name:tf
+            const deduped = [...new Map(flat.map(e => [`${e.name}:${e.tf}`, e])).values()];
+            if (deduped.length > 0) {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(deduped));
+                localStorage.removeItem(LEGACY_KEY);
+                return deduped;
+            }
+        }
     } catch { /* ignore */ }
-    return {};
+    return [];
 }
 
-/** Save per-TF profiles to localStorage */
-function persistProfiles(profiles: Record<number, IndicatorEntry[]>) {
+/** Persist global indicator list to localStorage */
+function persistIndicators(indicators: IndicatorEntry[]) {
     try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(profiles));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(indicators));
     } catch { /* ignore */ }
 }
 
@@ -24,71 +40,49 @@ interface AppState {
     selectedToken: string | null;
     selectedTF: number;
 
-    // Per-TF indicator profiles
-    activeEntriesByTF: Record<number, IndicatorEntry[]>;
+    // Global indicator list (persists across TF changes)
+    activeIndicators: IndicatorEntry[];
 
     setConfig: (config: AppConfig) => void;
     setSelectedToken: (token: string) => void;
     setSelectedTF: (tf: number) => void;
 
-    /** Set indicators for a specific TF */
-    setActiveEntriesForTF: (tf: number, entries: IndicatorEntry[]) => void;
+    /** Set the global indicator list */
+    setActiveIndicators: (entries: IndicatorEntry[]) => void;
 
-    /** Bulk-set all TF profiles (used on initial config_update from server) */
+    /** Bulk-set from server per-TF format — flattens into global list (migration compat) */
     setAllActiveEntries: (byTF: Record<number, IndicatorEntry[]>) => void;
-
-    /** Legacy: set entries for the currently selected TF */
-    setActiveEntries: (entries: IndicatorEntry[]) => void;
 }
 
-export const useAppStore = create<AppState>((set, get) => ({
+export const useAppStore = create<AppState>((set) => ({
     config: { tfs: [], tokens: [], indicators: [] },
     selectedToken: null,
     selectedTF: 60,
-    activeEntriesByTF: loadPersistedProfiles(),
+    activeIndicators: loadPersistedIndicators(),
 
     setConfig: (config) => set({ config }),
     setSelectedToken: (token) => set({ selectedToken: token }),
     setSelectedTF: (tf) => set({ selectedTF: tf }),
 
-    setActiveEntriesForTF: (tf, entries) => set((s) => {
-        const updated = { ...s.activeEntriesByTF, [tf]: entries };
-        persistProfiles(updated);
-        return { activeEntriesByTF: updated };
+    setActiveIndicators: (entries) => set(() => {
+        persistIndicators(entries);
+        return { activeIndicators: entries };
     }),
 
     setAllActiveEntries: (byTF) => set(() => {
-        // Server config is source of truth for which indicators exist.
-        // Only preserve user color overrides from localStorage.
-        const persisted = loadPersistedProfiles();
-        const merged: Record<number, IndicatorEntry[]> = {};
-        for (const tfStr of Object.keys(byTF)) {
-            const tf = Number(tfStr);
-            const serverEntries = byTF[tf];
-            const localEntries = persisted[tf];
-            if (!localEntries || localEntries.length === 0) {
-                merged[tf] = serverEntries;
-            } else {
-                // Keep server entries, apply local color overrides
-                const colorMap = new Map(localEntries.map(e => [e.name, e.color]));
-                merged[tf] = serverEntries.map(e => ({
-                    ...e,
-                    color: colorMap.get(e.name) || e.color,
-                }));
-            }
-        }
-        persistProfiles(merged);
-        return { activeEntriesByTF: merged };
-    }),
+        // Flatten all TF entries into one global list
+        const flat = Object.values(byTF).flat();
+        // Dedup by name:tf
+        const deduped = [...new Map(flat.map(e => [`${e.name}:${e.tf}`, e])).values()];
 
-    setActiveEntries: (entries) => set((s) => {
-        const updated = { ...s.activeEntriesByTF, [s.selectedTF]: entries };
-        persistProfiles(updated);
-        return { activeEntriesByTF: updated };
+        // Prefer existing localStorage indicators if they exist
+        const persisted = loadPersistedIndicators();
+        if (persisted.length > 0) {
+            persistIndicators(persisted);
+            return { activeIndicators: persisted };
+        }
+
+        persistIndicators(deduped);
+        return { activeIndicators: deduped };
     }),
 }));
-
-// Selector: get active entries for a specific TF
-export function selectActiveEntries(tf: number) {
-    return (s: AppState) => s.activeEntriesByTF[tf] || [];
-}

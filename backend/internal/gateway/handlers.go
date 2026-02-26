@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -14,14 +15,61 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// allowedOrigins holds the configured allowed origins, parsed from ALLOWED_ORIGINS env var.
+// Default "*" allows all origins (for development). Set to comma-separated origins in production.
+var allowedOrigins = parseAllowedOrigins(os.Getenv("ALLOWED_ORIGINS"))
+
+func parseAllowedOrigins(s string) []string {
+	if s == "" {
+		return []string{"*"}
+	}
+	var origins []string
+	for _, o := range strings.Split(s, ",") {
+		o = strings.TrimSpace(o)
+		if o != "" {
+			origins = append(origins, o)
+		}
+	}
+	if len(origins) == 0 {
+		return []string{"*"}
+	}
+	return origins
+}
+
+func checkOrigin(r *http.Request) bool {
+	for _, o := range allowedOrigins {
+		if o == "*" {
+			return true
+		}
+	}
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true // non-browser requests
+	}
+	for _, o := range allowedOrigins {
+		if o == origin {
+			return true
+		}
+	}
+	log.Printf("[api_gateway] rejected WS origin: %s", origin)
+	return false
+}
+
 var upgrader = websocket.Upgrader{
-	CheckOrigin:       func(r *http.Request) bool { return true },
+	CheckOrigin:       checkOrigin,
 	EnableCompression: true,
 }
 
 // SetCORS sets CORS headers for REST endpoints.
 func SetCORS(w http.ResponseWriter) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	origin := "*"
+	for _, o := range allowedOrigins {
+		if o != "*" {
+			origin = strings.Join(allowedOrigins, ", ")
+			break
+		}
+	}
+	w.Header().Set("Access-Control-Allow-Origin", origin)
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 }
@@ -51,13 +99,9 @@ func RegisterRoutes(mux *http.ServeMux, hub *Hub, rdb *goredis.Client, ctx conte
 	mux.HandleFunc("/api/tfs", func(w http.ResponseWriter, r *http.Request) {
 		SetCORS(w)
 		w.Header().Set("Content-Type", "application/json")
-		type tfInfo struct {
-			Seconds int    `json:"seconds"`
-			Label   string `json:"label"`
-		}
-		tfList := make([]tfInfo, len(tfs))
+		tfList := make([]TFInfo, len(tfs))
 		for i, tf := range tfs {
-			tfList[i] = tfInfo{Seconds: tf, Label: TFLabel(tf)}
+			tfList[i] = TFInfo{Seconds: tf, Label: TFLabel(tf)}
 		}
 		json.NewEncoder(w).Encode(tfList)
 	})
@@ -184,20 +228,6 @@ func RegisterRoutes(mux *http.ServeMux, hub *Hub, rdb *goredis.Client, ctx conte
 			msgs[i], msgs[j] = msgs[j], msgs[i]
 		}
 
-		type CandleOut struct {
-			TS       string  `json:"ts"`
-			Open     float64 `json:"open"`
-			High     float64 `json:"high"`
-			Low      float64 `json:"low"`
-			Close    float64 `json:"close"`
-			Volume   float64 `json:"volume"`
-			Count    float64 `json:"count"`
-			Token    string  `json:"token"`
-			Exchange string  `json:"exchange"`
-			TF       int     `json:"tf"`
-			Forming  bool    `json:"forming"`
-		}
-
 		candles := make([]CandleOut, 0, len(msgs))
 		for _, msg := range msgs {
 			dataStr, ok := msg.Values["data"].(string)
@@ -266,12 +296,6 @@ func RegisterRoutes(mux *http.ServeMux, hub *Hub, rdb *goredis.Client, ctx conte
 			msgs[i], msgs[j] = msgs[j], msgs[i]
 		}
 
-		type IndPoint struct {
-			Value float64 `json:"value"`
-			TS    string  `json:"ts"`
-			Ready bool    `json:"ready"`
-		}
-
 		points := make([]IndPoint, 0, len(msgs))
 		for _, msg := range msgs {
 			dataStr, ok := msg.Values["data"].(string)
@@ -292,6 +316,53 @@ func RegisterRoutes(mux *http.ServeMux, hub *Hub, rdb *goredis.Client, ctx conte
 		}
 
 		json.NewEncoder(w).Encode(points)
+	})
+
+	// REST: gap backfill — returns buffered envelopes for a channel between from_seq and to_seq
+	mux.HandleFunc("/api/missed", func(w http.ResponseWriter, r *http.Request) {
+		SetCORS(w)
+		w.Header().Set("Content-Type", "application/json")
+
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		channel := r.URL.Query().Get("channel")
+		fromStr := r.URL.Query().Get("from_seq")
+		toStr := r.URL.Query().Get("to_seq")
+
+		if channel == "" || fromStr == "" || toStr == "" {
+			http.Error(w, `{"error":"channel, from_seq, and to_seq are required"}`, http.StatusBadRequest)
+			return
+		}
+
+		fromSeq, err := strconv.ParseInt(fromStr, 10, 64)
+		if err != nil {
+			http.Error(w, `{"error":"invalid from_seq"}`, http.StatusBadRequest)
+			return
+		}
+		toSeq, err := strconv.ParseInt(toStr, 10, 64)
+		if err != nil {
+			http.Error(w, `{"error":"invalid to_seq"}`, http.StatusBadRequest)
+			return
+		}
+
+		envelopes := hub.GetReplayRange(channel, fromSeq, toSeq)
+		currentSeq := hub.GetChannelSeq(channel)
+
+		// Build response: array of raw JSON envelopes + metadata
+		rawEnvelopes := make([]json.RawMessage, len(envelopes))
+		for i, e := range envelopes {
+			rawEnvelopes[i] = json.RawMessage(e)
+		}
+
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"channel":     channel,
+			"current_seq": currentSeq,
+			"count":       len(rawEnvelopes),
+			"messages":    rawEnvelopes,
+		})
 	})
 
 	// Health endpoint

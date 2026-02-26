@@ -29,6 +29,9 @@ type SystemMetrics struct {
 	Goroutines  int     `json:"goroutines"`
 	UptimeSec   int64   `json:"uptime_sec"`
 	IndicatorMs float64 `json:"indicator_compute_ms"`
+	LatencyP50  float64 `json:"e2e_latency_p50_ms"`
+	LatencyP95  float64 `json:"e2e_latency_p95_ms"`
+	LatencyP99  float64 `json:"e2e_latency_p99_ms"`
 	TS          string  `json:"ts"`
 }
 

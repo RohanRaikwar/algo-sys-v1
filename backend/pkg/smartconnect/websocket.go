@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"os/signal"
@@ -406,7 +407,7 @@ func (s *SmartWebSocketV3) handleError(err error) {
 		if s.retryStrategy == 0 {
 			time.Sleep(s.retryDelay)
 		} else {
-			d := s.retryDelay * time.Duration(s.retryMultiplier^(attempts-1))
+			d := s.retryDelay * time.Duration(math.Pow(float64(s.retryMultiplier), float64(attempts-1)))
 			time.Sleep(d)
 		}
 		// attempt reconnect
@@ -482,7 +483,7 @@ func (s *SmartWebSocketV3) parseBinaryData(b []byte) (map[string]interface{}, er
 
 	// try to add more fields for QUOTE / SNAP_QUOTE
 	if int(subMode) == ModeQuote || int(subMode) == ModeSnapQuote {
-		if len(b) >= 99 {
+		if len(b) >= 123 {
 			out["last_traded_quantity"] = int64(binary.LittleEndian.Uint64(b[51:59]))
 			out["average_traded_price"] = int64(binary.LittleEndian.Uint64(b[59:67]))
 			out["volume_trade_for_the_day"] = int64(binary.LittleEndian.Uint64(b[67:75]))

@@ -45,9 +45,9 @@ func TestEngine_SMA20(t *testing.T) {
 			if !results[0].Ready {
 				t.Errorf("candle %d: expected Ready=true", i)
 			}
-			// All closes are 100.00, so SMA should be 100.00
-			if math.Abs(results[0].Value-100.0) > 0.001 {
-				t.Errorf("candle %d: expected SMA=100.0, got %.4f", i, results[0].Value)
+			// All closes are 10000 paise, so SMA should be 10000.0
+			if math.Abs(results[0].Value-10000.0) > 0.01 {
+				t.Errorf("candle %d: expected SMA=10000.0, got %.4f", i, results[0].Value)
 			}
 			if results[0].Name != "SMA_20" {
 				t.Errorf("candle %d: expected name=SMA_20, got %s", i, results[0].Name)
@@ -177,8 +177,8 @@ func TestProcessPeek_LiveResults(t *testing.T) {
 		t.Error("expected Ready=true on peek result")
 	}
 
-	// Peek value should be (100*4 + 110)/5 = 102.00
-	expected := 102.0
+	// Peek value should be (10000*4 + 11000)/5 = 10200.0 (paise)
+	expected := 10200.0
 	if math.Abs(results[0].Value-expected) > 0.01 {
 		t.Errorf("expected peek value=%.2f, got %.4f", expected, results[0].Value)
 	}

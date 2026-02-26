@@ -3,6 +3,7 @@ package indicator
 import (
 	"fmt"
 	"log"
+	"trading-systemv1/internal/model"
 )
 
 // ReloadConfigs updates the indicator engine with new configurations.
@@ -75,14 +76,14 @@ func migrateTokenIndicators(oldTI *tokenIndicators, oldConfigs, newConfigs []Ind
 	// Build lookup of old indicators by "TYPE_PERIOD"
 	oldByKey := make(map[string]Indicator, len(oldTI.indicators))
 	for i, cfg := range oldTI.configs {
-		key := cfg.Type + "_" + itoaInd(cfg.Period)
+		key := cfg.Type + "_" + model.Itoa(cfg.Period)
 		oldByKey[key] = oldTI.indicators[i]
 	}
 
 	// Build new indicator instances, reusing old ones where possible
 	newInds := make([]Indicator, len(newConfigs))
 	for i, cfg := range newConfigs {
-		key := cfg.Type + "_" + itoaInd(cfg.Period)
+		key := cfg.Type + "_" + model.Itoa(cfg.Period)
 		if existing, ok := oldByKey[key]; ok {
 			newInds[i] = existing // preserve accumulated state
 		} else {
@@ -126,10 +127,10 @@ func indicatorSetsEqual(a, b []IndicatorConfig) bool {
 	}
 	setA := make(map[string]bool, len(a))
 	for _, ic := range a {
-		setA[ic.Type+"_"+itoaInd(ic.Period)] = true
+		setA[ic.Type+"_"+model.Itoa(ic.Period)] = true
 	}
 	for _, ic := range b {
-		if !setA[ic.Type+"_"+itoaInd(ic.Period)] {
+		if !setA[ic.Type+"_"+model.Itoa(ic.Period)] {
 			return false
 		}
 	}

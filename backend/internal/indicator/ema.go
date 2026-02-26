@@ -23,7 +23,7 @@ func NewEMA(period int) *EMA {
 func (e *EMA) Name() string { return "EMA" }
 
 func (e *EMA) Update(candle model.Candle) {
-	price := float64(candle.Close) / 100.0 // paise → rupees
+	price := float64(candle.Close)
 	e.count++
 
 	if e.count <= e.period {
@@ -44,7 +44,7 @@ func (e *EMA) Ready() bool    { return e.count >= e.period }
 
 // Peek computes what Value() would be with an additional candle without mutating state.
 func (e *EMA) Peek(closePaise int64) float64 {
-	price := float64(closePaise) / 100.0
+	price := float64(closePaise)
 	if e.count < e.period {
 		// Not fully ready — return partial estimate using the price
 		return price

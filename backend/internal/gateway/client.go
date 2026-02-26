@@ -177,14 +177,14 @@ func (c *Client) handleSubscribe(msg SubscribeMsg) {
 		return
 	}
 
-	// Resolve indicator names
-	indNames := ResolveIndicatorNames(msg.Indicators)
+	// Resolve indicator entries with composite (name, tf) identity
+	indEntries := ResolveIndEntries(msg.Indicators, msg.TF)
 
 	sub := &ClientSubscription{
 		Symbol:     msg.Symbol,
 		TF:         msg.TF,
 		Indicators: msg.Indicators,
-		IndNames:   indNames,
+		IndEntries: indEntries,
 	}
 
 	// Store subscription
@@ -195,6 +195,10 @@ func (c *Client) handleSubscribe(msg SubscribeMsg) {
 	c.subs[sub.SubKey()] = sub
 	c.subMu.Unlock()
 
+	indNames := make([]string, len(indEntries))
+	for i, e := range indEntries {
+		indNames[i] = e.Key()
+	}
 	log.Printf("[subscribe] client subscribed: symbol=%s tf=%d indicators=%v",
 		msg.Symbol, msg.TF, indNames)
 
@@ -202,10 +206,16 @@ func (c *Client) handleSubscribe(msg SubscribeMsg) {
 	ctx := context.Background()
 	hasNew := publishNewIndicators(ctx, c.hub.Rdb, c.hub, msg.Indicators)
 
-	// If new indicators were just published, wait for indengine to compute them
-	if hasNew {
-		log.Printf("[subscribe] waiting for indengine to compute new indicators...")
-		waitForIndicators(ctx, c.hub.Rdb, sub, 8*time.Second)
+	// Always wait for indicator streams to have data before sending snapshot.
+	// New indicators need longer timeout (full recomputation by indengine),
+	// known indicators need shorter timeout (just verifying stream readiness).
+	if len(sub.IndEntries) > 0 {
+		timeout := 3 * time.Second
+		if hasNew {
+			timeout = 8 * time.Second
+			log.Printf("[subscribe] waiting for indengine to compute new indicators...")
+		}
+		waitForIndicators(ctx, c.hub.Rdb, sub, timeout)
 	}
 
 	// Build and send snapshot
@@ -257,17 +267,17 @@ func (c *Client) matchesChannel(channel string) bool {
 		if sub.Symbol != symbol {
 			continue
 		}
-		if sub.TF != parsed.tf {
+		// Candle channel — must match subscription's main TF
+		if parsed.chType == "candle" {
+			if sub.TF == parsed.tf {
+				return true
+			}
 			continue
 		}
-		// Candle channel — matches
-		if parsed.chType == "candle" {
-			return true
-		}
-		// Indicator channel — check if this indicator is in the sub
+		// Indicator channel — check against IndEntries by both name AND TF
 		if parsed.chType == "indicator" {
-			for _, name := range sub.IndNames {
-				if name == parsed.indName {
+			for _, entry := range sub.IndEntries {
+				if entry.Name == parsed.indName && entry.TF == parsed.tf {
 					return true
 				}
 			}

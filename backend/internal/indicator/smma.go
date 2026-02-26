@@ -19,7 +19,7 @@ func NewSMMA(period int) *SMMA {
 func (s *SMMA) Name() string { return "SMMA" }
 
 func (s *SMMA) Update(candle model.Candle) {
-	price := float64(candle.Close) / 100.0 // paise -> rupees
+	price := float64(candle.Close)
 	s.count++
 
 	if s.count <= s.period {
@@ -40,7 +40,7 @@ func (s *SMMA) Ready() bool    { return s.count >= s.period }
 
 // Peek computes what Value() would be with an additional candle without mutating state.
 func (s *SMMA) Peek(closePaise int64) float64 {
-	price := float64(closePaise) / 100.0
+	price := float64(closePaise)
 	if s.count < s.period {
 		return (s.sum + price) / float64(s.count+1)
 	}

@@ -9,8 +9,14 @@ interface Props {
 }
 
 export function Header({ onOpenSettings }: Props) {
-    const { config, selectedToken, selectedTF, setSelectedToken, setSelectedTF } = useAppStore();
-    const { connected, marketOpen, marketStatus } = useWSStore();
+    const config = useAppStore(s => s.config);
+    const selectedToken = useAppStore(s => s.selectedToken);
+    const selectedTF = useAppStore(s => s.selectedTF);
+    const setSelectedToken = useAppStore(s => s.setSelectedToken);
+    const setSelectedTF = useAppStore(s => s.setSelectedTF);
+    const connected = useWSStore(s => s.connected);
+    const marketOpen = useWSStore(s => s.marketOpen);
+    const marketStatus = useWSStore(s => s.marketStatus);
 
     return (
         <header className={styles.header}>
@@ -39,7 +45,7 @@ export function Header({ onOpenSettings }: Props) {
                     ))}
                 </select>
 
-                <button className={styles.settingsBtn} onClick={onOpenSettings} title="Indicator Settings">
+                <button className={styles.settingsBtn} onClick={onOpenSettings} title="Indicator Settings" aria-label="Indicator Settings">
                     <Settings size={16} />
                 </button>
 

@@ -21,7 +21,7 @@ func NewRSI(period int) *RSI {
 func (r *RSI) Name() string { return "RSI" }
 
 func (r *RSI) Update(candle model.Candle) {
-	price := float64(candle.Close) / 100.0 // paise → rupees
+	price := float64(candle.Close)
 	r.count++
 
 	if r.count == 1 {
@@ -81,7 +81,7 @@ func (r *RSI) Peek(closePaise int64) float64 {
 	if r.count <= r.period {
 		return r.current
 	}
-	price := float64(closePaise) / 100.0
+	price := float64(closePaise)
 	delta := price - r.prevClose
 	gain, loss := 0.0, 0.0
 	if delta > 0 {

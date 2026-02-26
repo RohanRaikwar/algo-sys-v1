@@ -1,6 +1,6 @@
 import type { AppConfig, CandleOut, IndPoint, IndicatorEntry } from '../types/api';
 
-const BASE = '';
+const BASE = import.meta.env.VITE_API_URL || '';
 
 export async function fetchConfig(): Promise<AppConfig> {
     const res = await fetch(`${BASE}/api/config`);

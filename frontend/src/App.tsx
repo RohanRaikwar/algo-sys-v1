@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useAppStore } from './store/useAppStore';
 import { useWebSocket } from './hooks/useWebSocket';
-import { fetchConfig, fetchActiveConfig } from './services/api';
+import { useConfigQuery, useActiveConfigQuery } from './hooks/useConfigQuery';
 import { Header } from './components/layout/Header';
 import { StatusBar } from './components/layout/StatusBar';
 import { ReconnectBanner } from './components/layout/ReconnectBanner';
@@ -16,51 +16,59 @@ const queryClient = new QueryClient({
 });
 
 function Dashboard() {
-    const { setConfig, setSelectedToken, setSelectedTF, setAllActiveEntries, setActiveEntriesForTF } = useAppStore();
+    const setConfig = useAppStore(s => s.setConfig);
+    const setSelectedToken = useAppStore(s => s.setSelectedToken);
+    const setSelectedTF = useAppStore(s => s.setSelectedTF);
+    const setActiveIndicators = useAppStore(s => s.setActiveIndicators);
     const [settingsOpen, setSettingsOpen] = useState(false);
-    const [ready, setReady] = useState(false);
 
     // Connect WebSocket
     useWebSocket();
 
-    // Load config on mount
+    // Fetch config via React Query
+    const { data: cfg, isLoading: cfgLoading, isError: cfgError } = useConfigQuery();
+
+    // Fetch active indicator config (only after config loaded)
+    const { data: activeByTF, isError: activeError } = useActiveConfigQuery(!!cfg);
+
+    // Apply config when loaded
     useEffect(() => {
-        (async () => {
-            try {
-                const cfg = await fetchConfig();
-                setConfig(cfg);
-                if (cfg.tokens.length > 0) setSelectedToken(cfg.tokens[0]);
-                if (cfg.tfs.length > 0) setSelectedTF(cfg.tfs[0]);
+        if (!cfg) return;
+        setConfig(cfg);
+        if (cfg.tokens.length > 0) setSelectedToken(cfg.tokens[0]);
+        if (cfg.tfs.length > 0) setSelectedTF(cfg.tfs[0]);
+    }, [cfg, setConfig, setSelectedToken, setSelectedTF]);
 
-                // Load active indicator config (per-TF)
-                try {
-                    const byTF = await fetchActiveConfig();
-                    const hasSome = Object.values(byTF).some(arr => arr.length > 0);
-                    if (hasSome) {
-                        setAllActiveEntries(byTF);
-                    } else {
-                        throw new Error('empty');
-                    }
-                } catch {
-                    // Auto-populate: same indicators for each TF from server config
-                    const serverInds = (cfg.indicators || []).filter((n) => !n.startsWith('RSI'));
-                    const byTF: Record<number, { name: string; tf: number }[]> = {};
-                    for (const tf of cfg.tfs) {
-                        byTF[tf] = serverInds.map((name) => ({ name, tf }));
-                    }
-                    setAllActiveEntries(byTF);
+    // Apply active indicator config — flatten per-TF into global list
+    // No auto-populate: user adds indicators dynamically via Settings
+    useEffect(() => {
+        if (!cfg) return;
+
+        if (activeByTF) {
+            const hasSome = Object.values(activeByTF).some(arr => arr.length > 0);
+            if (hasSome) {
+                // Flatten all TF entries into one global list, dedup by name:tf
+                const flat = Object.values(activeByTF).flat();
+                const deduped = [...new Map(flat.map(e => [`${e.name}:${e.tf}`, e])).values()];
+                // Only apply if user has no local overrides
+                const existing = useAppStore.getState().activeIndicators;
+                if (existing.length === 0) {
+                    setActiveIndicators(deduped);
                 }
-
-                setReady(true);
-            } catch (e) {
-                console.warn('Config fetch failed, using defaults', e);
-                setConfig({ tfs: [60, 300, 900], tokens: ['NSE:99926000'], indicators: ['SMA_20', 'SMA_50', 'SMA_200', 'EMA_9', 'EMA_21'] });
-                setReady(true);
             }
-        })();
-    }, []);
+        }
+    }, [cfg, activeByTF, activeError, setActiveIndicators]);
 
-    if (!ready) {
+    // Apply defaults on config fetch error
+    useEffect(() => {
+        if (cfgError && !cfg) {
+            const defaults = { tfs: [60, 300, 900], tokens: ['NSE:99926000'], indicators: ['SMA_20', 'SMA_50', 'SMA_200', 'EMA_9', 'EMA_21'] };
+            setConfig(defaults);
+        }
+    }, [cfgError, cfg, setConfig]);
+
+    // Loading state — all hooks must be declared ABOVE this early return
+    if (cfgLoading) {
         return (
             <div style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -94,3 +102,4 @@ export default function App() {
         </QueryClientProvider>
     );
 }
+

@@ -86,7 +86,7 @@ func (e *Engine) Process(tfc model.TFCandle) []model.IndicatorResult {
 		ind.Update(candle)
 		cfg := ti.configs[i]
 		results = append(results, model.IndicatorResult{
-			Name:     ind.Name() + "_" + itoaInd(cfg.Period),
+			Name:     ind.Name() + "_" + model.Itoa(cfg.Period),
 			Token:    tfc.Token,
 			Exchange: tfc.Exchange,
 			TF:       tfc.TF,
@@ -121,7 +121,7 @@ func (e *Engine) ProcessPeek(tfc model.TFCandle) []model.IndicatorResult {
 	for i, ind := range ti.indicators {
 		cfg := ti.configs[i]
 		results = append(results, model.IndicatorResult{
-			Name:     ind.Name() + "_" + itoaInd(cfg.Period),
+			Name:     ind.Name() + "_" + model.Itoa(cfg.Period),
 			Token:    tfc.Token,
 			Exchange: tfc.Exchange,
 			TF:       tfc.TF,
@@ -181,19 +181,4 @@ func (e *Engine) createTokenIndicators(tfIdx int) *tokenIndicators {
 		indicators: inds,
 		configs:    cfg.Indicators,
 	}
-}
-
-// itoaInd converts int to string without importing strconv.
-func itoaInd(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	buf := [20]byte{}
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(buf[i:])
 }

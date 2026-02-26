@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef } from 'react';
 import { useWSStore } from '../store/useWSStore';
 import { useAppStore } from '../store/useAppStore';
 import { useCandleStore } from '../store/useCandleStore';
@@ -8,24 +8,21 @@ import type {
     SubscribeMsg, IndicatorSpecMsg,
 } from '../types/ws';
 
-// Global WS ref so sendSubscribe can be called from outside the hook
-let globalWs: WebSocket | null = null;
-
 /**
- * Convert activeEntries (name like "SMA_9") to IndicatorSpec for SUBSCRIBE.
- * E.g. "SMA_9" → { id: "sma", source: "close", params: { length: 9 } }
+ * Convert an IndicatorEntry to an IndicatorSpec for SUBSCRIBE.
+ * E.g. {name:"SMA_9", tf:300} → { id: "sma", source: "close", params: { length: 9 }, tf: 300 }
  */
-function entryToSpec(name: string): IndicatorSpecMsg {
-    const parts = name.split('_');
+function entryToSpec(entry: { name: string; tf: number }): IndicatorSpecMsg {
+    const parts = entry.name.split('_');
     const id = (parts[0] || 'sma').toLowerCase();
     const length = parseInt(parts[1] || '14', 10) || 14;
-    return { id, source: 'close', params: { length } };
+    return { id, source: 'close', params: { length }, tf: entry.tf };
 }
 
 let subIdCounter = 0;
 
 /**
- * Send a SUBSCRIBE message over WebSocket.
+ * Send a SUBSCRIBE message over the store-managed WebSocket.
  */
 export function sendSubscribe(
     symbol: string,
@@ -33,12 +30,9 @@ export function sendSubscribe(
     entries: Array<{ name: string; tf: number }>,
     candleCount = 500,
 ) {
-    if (!globalWs || globalWs.readyState !== WebSocket.OPEN) {
-        console.warn('[ws] cannot SUBSCRIBE: not connected');
-        return;
-    }
+    const { send } = useWSStore.getState();
 
-    const indicators = entries.map(e => entryToSpec(e.name));
+    const indicators = entries.map(e => entryToSpec(e));
     const msg: SubscribeMsg = {
         type: 'SUBSCRIBE',
         reqId: `r${++subIdCounter}`,
@@ -48,24 +42,49 @@ export function sendSubscribe(
         indicators,
     };
 
-    globalWs.send(JSON.stringify(msg));
+    send(JSON.stringify(msg));
     console.log('[ws] SUBSCRIBE sent', msg);
 }
 
+/**
+ * Send an UNSUBSCRIBE message to drop a prior subscription.
+ */
+export function sendUnsubscribe(symbol: string, tf: number) {
+    const { send } = useWSStore.getState();
+    const msg = {
+        type: 'UNSUBSCRIBE',
+        reqId: `r${++subIdCounter}`,
+        symbol,
+        tf,
+    };
+    send(JSON.stringify(msg));
+    console.log('[ws] UNSUBSCRIBE sent', msg);
+}
+
 export function useWebSocket() {
-    const wsRef = useRef<WebSocket | null>(null);
+    const localWsRef = useRef<WebSocket | null>(null);
     const pingRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const subscribedRef = useRef(false);
 
-    const {
-        setConnected, incrementMsg, setLastMsgTS,
-        reconnectAttempts, setReconnectAttempts,
-        setWsDelay, setMarket, setMetrics,
-        setLastUpdateTime, setLatency, lastMsgTS,
-    } = useWSStore();
+    // Use atomic selectors — each grabs only its own setter function,
+    // preventing unnecessary re-renders from unrelated state changes.
+    const setConnected = useWSStore(s => s.setConnected);
+    const incrementMsg = useWSStore(s => s.incrementMsg);
+    const setLastMsgTS = useWSStore(s => s.setLastMsgTS);
+    const setReconnectAttempts = useWSStore(s => s.setReconnectAttempts);
+    const setWsDelay = useWSStore(s => s.setWsDelay);
+    const setMarket = useWSStore(s => s.setMarket);
+    const setMetrics = useWSStore(s => s.setMetrics);
+    const setLastUpdateTime = useWSStore(s => s.setLastUpdateTime);
+    const setLatency = useWSStore(s => s.setLatency);
+    const setWsRef = useWSStore(s => s.setWsRef);
 
-    const { config, setAllActiveEntries } = useAppStore();
-    const { upsertCandle, aggregateToTF, updateIndicator, setSnapshot } = useCandleStore();
+    const setActiveIndicators = useAppStore(s => s.setActiveIndicators);
+
+    const upsertCandle = useCandleStore(s => s.upsertCandle);
+    const aggregateToTF = useCandleStore(s => s.aggregateToTF);
+    const updateIndicator = useCandleStore(s => s.updateIndicator);
+    const setSnapshot = useCandleStore(s => s.setSnapshot);
 
     useEffect(() => {
         let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -80,8 +99,8 @@ export function useWebSocket() {
             }
 
             const ws = new WebSocket(url);
-            wsRef.current = ws;
-            globalWs = ws;
+            localWsRef.current = ws;
+            setWsRef(ws); // Store-managed WS ref
 
             ws.onopen = () => {
                 setConnected(true);
@@ -89,11 +108,11 @@ export function useWebSocket() {
                 setReconnectAttempts(0);
                 subscribedRef.current = false;
 
-                // Auto-subscribe with current state
+                // Auto-subscribe with current state (global indicators)
                 const state = useAppStore.getState();
                 const token = state.selectedToken;
                 const tf = state.selectedTF || 60;
-                const entries = state.activeEntriesByTF[tf] || [];
+                const entries = state.activeIndicators || [];
 
                 if (token && entries.length > 0) {
                     setTimeout(() => sendSubscribe(token, tf, entries), 100);
@@ -103,7 +122,7 @@ export function useWebSocket() {
 
             ws.onclose = () => {
                 setConnected(false);
-                globalWs = null;
+                setWsRef(null);
                 subscribedRef.current = false;
                 attempts++;
                 setReconnectAttempts(attempts);
@@ -148,14 +167,12 @@ export function useWebSocket() {
                             continue;
                         }
 
-                        // ── Config update — group entries by TF ──
+                        // ── Config update — set global indicator list ──
                         if (envelope.type === 'config_update' && envelope.entries) {
-                            const byTF: Record<number, { name: string; tf: number; color?: string }[]> = {};
-                            for (const e of envelope.entries as { name: string; tf: number; color?: string }[]) {
-                                if (!byTF[e.tf]) byTF[e.tf] = [];
-                                byTF[e.tf].push(e);
-                            }
-                            setAllActiveEntries(byTF);
+                            const entries = envelope.entries as { name: string; tf: number; color?: string }[];
+                            // Dedup by name:tf
+                            const deduped = [...new Map(entries.map(e => [`${e.name}:${e.tf}`, e])).values()];
+                            setActiveIndicators(deduped);
                             continue;
                         }
 
@@ -176,6 +193,27 @@ export function useWebSocket() {
                         if (!envelope.channel) continue;
                         const parsed = parseChannel(envelope.channel);
                         if (!parsed) continue;
+
+                        // ── Gap detection via channel_seq ──
+                        if (typeof envelope.channel_seq === 'number') {
+                            const { channelSeqs } = useWSStore.getState();
+                            const expectedSeq = (channelSeqs[envelope.channel] || 0) + 1;
+                            const receivedSeq = envelope.channel_seq;
+
+                            if (expectedSeq > 1 && receivedSeq > expectedSeq) {
+                                console.warn(`[ws] gap detected on ${envelope.channel}: expected=${expectedSeq} got=${receivedSeq}`);
+                                // Fire-and-forget backfill
+                                fetch(`/api/missed?channel=${encodeURIComponent(envelope.channel)}&from_seq=${expectedSeq}&to_seq=${receivedSeq - 1}`)
+                                    .then(r => r.json())
+                                    .then(data => {
+                                        if (data.messages && data.messages.length > 0) {
+                                            console.log(`[ws] backfilled ${data.messages.length} missed messages for ${envelope.channel}`);
+                                        }
+                                    })
+                                    .catch(err => console.warn('[ws] gap backfill failed:', err));
+                            }
+                            useWSStore.getState().setChannelSeq(envelope.channel, receivedSeq);
+                        }
 
                         let payload: Record<string, unknown>;
                         if (typeof envelope.data === 'string') {
@@ -251,7 +289,8 @@ export function useWebSocket() {
                         .map(p => ({
                             time: Math.floor(new Date(p.ts).getTime() / 1000) + IST_OFFSET,
                             value: p.value,
-                        }));
+                        }))
+                        .sort((a, b) => a.time - b.time);
                 }
             }
 
@@ -265,19 +304,20 @@ export function useWebSocket() {
 
         // Ping every 5s
         pingRef.current = setInterval(() => {
-            if (wsRef.current?.readyState === WebSocket.OPEN) {
-                wsRef.current.send(JSON.stringify({ ping: Date.now() }));
+            const ws = useWSStore.getState().wsRef;
+            if (ws?.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ ping: Date.now() }));
             }
         }, 5000);
 
         return () => {
             if (reconnectTimer) clearTimeout(reconnectTimer);
             if (pingRef.current) clearInterval(pingRef.current);
-            if (wsRef.current) {
-                wsRef.current.onclose = null; // prevent reconnect on unmount
-                wsRef.current.close();
+            if (localWsRef.current) {
+                localWsRef.current.onclose = null; // prevent reconnect on unmount
+                localWsRef.current.close();
             }
-            globalWs = null;
+            setWsRef(null);
         };
     }, []); // connect once on mount
 }

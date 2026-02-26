@@ -30,7 +30,7 @@ func (c *TFCandle) Key() string {
 
 // StreamKey returns the Redis stream key: "candle:{TF}s:{exchange}:{token}".
 func (c *TFCandle) StreamKey() string {
-	return "candle:" + itoa(c.TF) + "s:" + c.Exchange + ":" + c.Token
+	return "candle:" + Itoa(c.TF) + "s:" + c.Exchange + ":" + c.Token
 }
 
 // JSON returns the JSON-encoded TF candle.
@@ -53,13 +53,13 @@ type IndicatorResult struct {
 
 // StreamKey returns the Redis stream key: "ind:{name}:{TF}s:{exchange}:{token}".
 func (r *IndicatorResult) StreamKey() string {
-	return "ind:" + r.Name + ":" + itoa(r.TF) + "s:" + r.Exchange + ":" + r.Token
+	return "ind:" + r.Name + ":" + Itoa(r.TF) + "s:" + r.Exchange + ":" + r.Token
 }
 
 // PubSubChannel returns the Redis PubSub channel for this indicator result.
 // Uses string concatenation instead of fmt.Sprintf for zero-alloc hot path.
 func (r *IndicatorResult) PubSubChannel() string {
-	return "pub:ind:" + r.Name + ":" + itoa(r.TF) + "s:" + r.Exchange + ":" + r.Token
+	return "pub:ind:" + r.Name + ":" + Itoa(r.TF) + "s:" + r.Exchange + ":" + r.Token
 }
 
 // JSON returns the JSON-encoded indicator result.
@@ -93,27 +93,4 @@ func (r *IndicatorResult) JSON() []byte {
 	buf = append(buf, '}')
 
 	return buf
-}
-
-// itoa is a minimal int-to-string without importing strconv in hot path.
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	buf := [20]byte{}
-	i := len(buf)
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	if neg {
-		i--
-		buf[i] = '-'
-	}
-	return string(buf[i:])
 }

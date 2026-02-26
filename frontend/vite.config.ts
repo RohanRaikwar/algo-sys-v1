@@ -15,10 +15,19 @@ export default defineConfig({
             '/api': {
                 target: 'http://localhost:9090',
                 changeOrigin: true,
+                configure: (proxy) => {
+                    proxy.on('error', () => { });
+                },
             },
             '/ws': {
                 target: 'ws://localhost:9090',
                 ws: true,
+                configure: (proxy) => {
+                    proxy.on('error', () => { });
+                    proxy.on('proxyReqWs', (_proxyReq, _req, socket) => {
+                        socket.on('error', () => { });
+                    });
+                },
             },
         },
     },

@@ -23,6 +23,9 @@ export interface WSEnvelope {
     candle?: SnapshotCandle;
     // ERROR fields
     error?: string;
+    // Sequence fields for gap detection
+    seq?: number;
+    channel_seq?: number;
 }
 
 export interface SystemMetrics {
@@ -99,6 +102,7 @@ export interface IndicatorSpecMsg {
     id: string;      // e.g. "smma", "ema", "sma"
     source: string;  // e.g. "close"
     params: Record<string, number>;  // e.g. { length: 21 }
+    tf?: number;     // per-indicator TF override (seconds), omit to use subscription TF
 }
 
 export interface SnapshotCandle {

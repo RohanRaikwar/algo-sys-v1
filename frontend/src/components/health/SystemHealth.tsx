@@ -19,7 +19,8 @@ function pctColor(pct: number, threshLow = 50, threshHigh = 80, lowColor = 'var(
 }
 
 export function SystemHealth() {
-    const { metrics, wsDelay } = useWSStore();
+    const metrics = useWSStore(s => s.metrics);
+    const wsDelay = useWSStore(s => s.wsDelay);
     const m = metrics;
 
     const cpuPct = m?.cpu_percent || 0;
@@ -32,6 +33,24 @@ export function SystemHealth() {
         width: `${Math.min(100, (load / CPU_CORES) * 100)}%`,
         background: loadColor(load),
     });
+
+    if (!m) {
+        return (
+            <div className={styles.section}>
+                <div className={styles.sectionTitle}>🖥 System Health</div>
+                <div className={styles.grid}>
+                    {['CPU Usage', 'CPU Load', 'Memory', 'WS Delay', 'Indicator Compute', 'Process Info'].map(label => (
+                        <div key={label} className={styles.card}>
+                            <div className={styles.cardTitle}>{label}</div>
+                            <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', padding: '16px 0' }}>
+                                Waiting for metrics…
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className={styles.section}>

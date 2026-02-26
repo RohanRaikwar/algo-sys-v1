@@ -116,6 +116,16 @@ func parseTokenKeys(s string) []string {
 			exName = "NFO"
 		case "3":
 			exName = "BSE"
+		case "4":
+			exName = "BSE_FO"
+		case "5":
+			exName = "MCX_FO"
+		case "7":
+			exName = "NCX_FO"
+		case "13":
+			exName = "CDE_FO"
+		default:
+			log.Printf("[api_gateway] WARNING: unknown exchange type %q, defaulting to NSE", parts[0])
 		}
 		keys = append(keys, exName+":"+parts[1])
 	}

@@ -3,7 +3,10 @@ import { useWSStore } from '../../store/useWSStore';
 import styles from './StatusBar.module.css';
 
 export function StatusBar() {
-    const { msgCount, startTime, lastUpdateTime, latency } = useWSStore();
+    const msgCount = useWSStore(s => s.msgCount);
+    const startTime = useWSStore(s => s.startTime);
+    const lastUpdateTime = useWSStore(s => s.lastUpdateTime);
+    const latency = useWSStore(s => s.latency);
     const [uptime, setUptime] = useState('0s');
 
     useEffect(() => {

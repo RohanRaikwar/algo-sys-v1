@@ -24,7 +24,7 @@ func NewSMA(period int) *SMA {
 func (s *SMA) Name() string { return "SMA" }
 
 func (s *SMA) Update(candle model.Candle) {
-	price := float64(candle.Close) / 100.0 // paise → rupees
+	price := float64(candle.Close)
 
 	if s.count >= s.period {
 		// Subtract the oldest value being overwritten
@@ -46,7 +46,7 @@ func (s *SMA) Ready() bool    { return s.count >= s.period }
 
 // Peek computes what Value() would be with an additional candle without mutating state.
 func (s *SMA) Peek(closePaise int64) float64 {
-	price := float64(closePaise) / 100.0
+	price := float64(closePaise)
 	if s.count < s.period {
 		// Not fully ready — return partial average including this price
 		return (s.sum + price) / float64(s.count+1)

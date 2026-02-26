@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -31,9 +32,10 @@ type HistoryRequest struct {
 
 // IndicatorSpec describes a single indicator in the client's profile.
 type IndicatorSpec struct {
-	ID     string         `json:"id"`     // e.g. "smma", "ema", "sma", "rsi"
-	Source string         `json:"source"` // e.g. "close", "high", "low"
-	Params map[string]int `json:"params"` // e.g. {"length": 21}
+	ID     string         `json:"id"`           // e.g. "smma", "ema", "sma", "rsi"
+	Source string         `json:"source"`       // e.g. "close", "high", "low"
+	Params map[string]int `json:"params"`       // e.g. {"length": 21}
+	TF     int            `json:"tf,omitempty"` // per-indicator TF override (seconds)
 }
 
 // UnsubscribeMsg is the client → server UNSUBSCRIBE request.
@@ -97,12 +99,23 @@ type ErrorResponse struct {
 
 // ── Subscription State ──
 
+// IndEntry is a resolved indicator identity with composite key (name + tf).
+type IndEntry struct {
+	Name string
+	TF   int
+}
+
+// Key returns the composite identity "NAME:TF".
+func (e IndEntry) Key() string {
+	return e.Name + ":" + strconv.Itoa(e.TF)
+}
+
 // ClientSubscription holds per-(symbol, tf) state for a client.
 type ClientSubscription struct {
 	Symbol     string
 	TF         int
 	Indicators []IndicatorSpec
-	IndNames   []string // resolved names like "SMMA_21", "EMA_9"
+	IndEntries []IndEntry // resolved (name, tf) pairs — no collisions
 }
 
 // SubKey returns the map key for this subscription.
@@ -141,6 +154,20 @@ func ResolveIndicatorNames(specs []IndicatorSpec) []string {
 	return names
 }
 
+// ResolveIndEntries builds a list of (name, tf) entries for MTF support.
+// Uses composite identity so SMA_20@60 and SMA_20@300 don't collide.
+func ResolveIndEntries(specs []IndicatorSpec, defaultTF int) []IndEntry {
+	entries := make([]IndEntry, len(specs))
+	for i, spec := range specs {
+		tf := defaultTF
+		if spec.TF > 0 {
+			tf = spec.TF
+		}
+		entries[i] = IndEntry{Name: IndicatorSpecToName(spec), TF: tf}
+	}
+	return entries
+}
+
 // ── Redis History Fetching ──
 
 // BuildSnapshotFromRedis reads historical candles + indicator data from Redis.
@@ -157,7 +184,7 @@ func BuildSnapshotFromRedis(ctx context.Context, rdb *goredis.Client, sub *Clien
 		Symbol:     sub.Symbol,
 		TF:         sub.TF,
 		Candles:    make([]SnapshotCandle, 0, candleLimit),
-		Indicators: make(map[string][]SnapshotIndPoint, len(sub.IndNames)),
+		Indicators: make(map[string][]SnapshotIndPoint, len(sub.IndEntries)),
 	}
 
 	// 1. Fetch candles from Redis stream
@@ -188,12 +215,14 @@ func BuildSnapshotFromRedis(ctx context.Context, rdb *goredis.Client, sub *Clien
 
 	// Compute candle price band for filtering warmup-phase indicator values
 	var bandLo, bandHi float64
+	// Compute candle time range to clamp indicator data to visible range
+	var candleTimeMin, candleTimeMax time.Time
 	if len(snap.Candles) > 0 {
-		bandLo = float64(snap.Candles[0].Low) / 100.0
-		bandHi = float64(snap.Candles[0].High) / 100.0
+		bandLo = snap.Candles[0].Low
+		bandHi = snap.Candles[0].High
 		for _, c := range snap.Candles[1:] {
-			lo := float64(c.Low) / 100.0
-			hi := float64(c.High) / 100.0
+			lo := c.Low
+			hi := c.High
 			if lo < bandLo {
 				bandLo = lo
 			}
@@ -205,15 +234,33 @@ func BuildSnapshotFromRedis(ctx context.Context, rdb *goredis.Client, sub *Clien
 		bandLo -= margin
 		bandHi += margin
 		log.Printf("[subscribe] candle price band: %.2f – %.2f (with 10%% margin)", bandLo, bandHi)
+
+		// Parse first and last candle timestamps for time-range clamping
+		if t, err := time.Parse(time.RFC3339, snap.Candles[0].TS); err == nil {
+			candleTimeMin = t
+		}
+		if t, err := time.Parse(time.RFC3339, snap.Candles[len(snap.Candles)-1].TS); err == nil {
+			candleTimeMax = t
+		}
+		// Add 1-candle margin on each side
+		if !candleTimeMin.IsZero() {
+			candleTimeMin = candleTimeMin.Add(-time.Duration(sub.TF) * time.Second)
+		}
+		if !candleTimeMax.IsZero() {
+			candleTimeMax = candleTimeMax.Add(time.Duration(sub.TF) * time.Second)
+		}
+		log.Printf("[subscribe] candle time range: %s – %s", candleTimeMin, candleTimeMax)
 	}
 
-	// 2. Fetch indicator histories from Redis streams
-	for _, indName := range sub.IndNames {
-		indStreamKey := fmt.Sprintf("ind:%s:%ds:%s", indName, sub.TF, sub.Symbol)
+	// 2. Fetch indicator histories from Redis streams (using per-indicator TF)
+	for _, entry := range sub.IndEntries {
+		// Key as "NAME:TF" so frontend knows the indicator's computation TF
+		snapKey := entry.Key()
+		indStreamKey := fmt.Sprintf("ind:%s:%ds:%s", entry.Name, entry.TF, sub.Symbol)
 		indMsgs, err := rdb.XRevRangeN(ctx, indStreamKey, "+", "-", int64(candleLimit)).Result()
 		if err != nil {
 			log.Printf("[subscribe] indicator stream read error for %s: %v", indStreamKey, err)
-			snap.Indicators[indName] = []SnapshotIndPoint{}
+			snap.Indicators[snapKey] = []SnapshotIndPoint{}
 			continue
 		}
 
@@ -242,9 +289,17 @@ func BuildSnapshotFromRedis(ctx context.Context, rdb *goredis.Client, sub *Clien
 			}
 			// Skip warmup-phase values that fall outside the candle price band
 			// (only for price-overlay indicators like SMA/EMA/SMMA, not RSI)
-			if bandHi > 0 && !strings.HasPrefix(indName, "RSI") {
+			if bandHi > 0 && !strings.HasPrefix(entry.Name, "RSI") {
 				if p.Value < bandLo || p.Value > bandHi {
 					continue
+				}
+			}
+			// Clamp to candle time range — skip indicator points outside visible candles
+			if !candleTimeMin.IsZero() && !candleTimeMax.IsZero() {
+				if pt, err := time.Parse(time.RFC3339, p.TS); err == nil {
+					if pt.Before(candleTimeMin) || pt.After(candleTimeMax) {
+						continue
+					}
 				}
 			}
 			points = append(points, SnapshotIndPoint{
@@ -253,7 +308,27 @@ func BuildSnapshotFromRedis(ctx context.Context, rdb *goredis.Client, sub *Clien
 				Ready: p.Ready,
 			})
 		}
-		snap.Indicators[indName] = points
+
+		// Deduplicate by timestamp: keep the LAST value for each TS
+		// (stream may contain multiple entries per candle from backfill recomputation)
+		seen := make(map[string]int, len(points))
+		deduped := make([]SnapshotIndPoint, 0, len(points))
+		for _, pt := range points {
+			if idx, ok := seen[pt.TS]; ok {
+				deduped[idx] = pt // overwrite with newer value
+			} else {
+				seen[pt.TS] = len(deduped)
+				deduped = append(deduped, pt)
+			}
+		}
+
+		// Sort by timestamp to ensure chronological order
+		// (backfill batch-inserts may have non-chronological ts within stream)
+		sort.Slice(deduped, func(i, j int) bool {
+			return deduped[i].TS < deduped[j].TS
+		})
+
+		snap.Indicators[snapKey] = deduped
 	}
 
 	return snap, nil
@@ -289,7 +364,13 @@ func publishNewIndicators(ctx context.Context, rdb *goredis.Client, hub *Hub, ne
 	// Build the set of all currently known + new indicator configs
 	known := make(map[string]bool)
 	var allConfigs []string
-	for _, ind := range hub.Indicators {
+
+	hub.mu.RLock()
+	indicators := make([]string, len(hub.Indicators))
+	copy(indicators, hub.Indicators)
+	hub.mu.RUnlock()
+
+	for _, ind := range indicators {
 		// Hub.Indicators stores names like "SMA_9" — convert to "SMA:9"
 		parts := strings.SplitN(ind, "_", 2)
 		if len(parts) == 2 {
@@ -345,8 +426,8 @@ func waitForIndicators(ctx context.Context, rdb *goredis.Client, sub *ClientSubs
 			return
 		case <-ticker.C:
 			allReady := true
-			for _, indName := range sub.IndNames {
-				key := fmt.Sprintf("ind:%s:%ds:%s", indName, sub.TF, sub.Symbol)
+			for _, entry := range sub.IndEntries {
+				key := fmt.Sprintf("ind:%s:%ds:%s", entry.Name, entry.TF, sub.Symbol)
 				n, err := rdb.XLen(ctx, key).Result()
 				if err != nil || n == 0 {
 					allReady = false
@@ -354,7 +435,7 @@ func waitForIndicators(ctx context.Context, rdb *goredis.Client, sub *ClientSubs
 				}
 			}
 			if allReady {
-				log.Printf("[subscribe] all %d indicator streams ready", len(sub.IndNames))
+				log.Printf("[subscribe] all %d indicator streams ready", len(sub.IndEntries))
 				return
 			}
 		}
