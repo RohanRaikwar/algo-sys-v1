@@ -2,6 +2,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 12px;
     padding: 16px 28px;
     border-bottom: 1px solid var(--border);
     backdrop-filter: blur(20px);
@@ -15,6 +16,7 @@
     display: flex;
     align-items: center;
     gap: 14px;
+    min-width: 0;
 }
 
 .logo {
@@ -38,6 +40,8 @@
     display: flex;
     align-items: center;
     gap: 18px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
 }
 
 .select {
@@ -51,6 +55,8 @@
     cursor: pointer;
     outline: none;
     transition: var(--transition);
+    min-width: 0;
+    max-width: 220px;
 }
 
 .select:hover,
@@ -67,6 +73,7 @@
     padding: 5px 12px;
     border-radius: 999px;
     transition: var(--transition);
+    white-space: nowrap;
 }
 
 .connected {
@@ -111,8 +118,59 @@
     transform: rotate(30deg);
 }
 
+@media (max-width: 900px) {
+    .header {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .headerRight {
+        width: 100%;
+        justify-content: flex-start;
+        gap: 10px;
+    }
+
+    .select {
+        flex: 1 1 180px;
+        max-width: none;
+    }
+}
+
 @media (max-width: 640px) {
     .header {
-        padding: 12px 16px;
+        padding: 10px 12px;
+        gap: 10px;
+    }
+
+    .headerLeft {
+        gap: 8px;
+    }
+
+    .logo {
+        font-size: 1.1rem;
+    }
+
+    .logoSub {
+        display: none;
+    }
+
+    .headerRight {
+        gap: 8px;
+    }
+
+    .select {
+        flex: 1 1 100%;
+        font-size: 0.75rem;
+        padding: 6px 10px;
+    }
+
+    .badge {
+        font-size: 0.7rem;
+        padding: 4px 9px;
+    }
+
+    .settingsBtn {
+        width: 34px;
+        height: 34px;
     }
 }

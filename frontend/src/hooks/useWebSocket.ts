@@ -79,8 +79,6 @@ export function useWebSocket() {
     const setLatency = useWSStore(s => s.setLatency);
     const setWsRef = useWSStore(s => s.setWsRef);
 
-    const setActiveIndicators = useAppStore(s => s.setActiveIndicators);
-
     const upsertCandle = useCandleStore(s => s.upsertCandle);
     const aggregateToTF = useCandleStore(s => s.aggregateToTF);
     const updateIndicator = useCandleStore(s => s.updateIndicator);
@@ -114,7 +112,7 @@ export function useWebSocket() {
                 const tf = state.selectedTF || 60;
                 const entries = state.activeIndicators || [];
 
-                if (token && entries.length > 0) {
+                if (token) {
                     setTimeout(() => sendSubscribe(token, tf, entries), 100);
                     subscribedRef.current = true;
                 }
@@ -167,12 +165,8 @@ export function useWebSocket() {
                             continue;
                         }
 
-                        // ── Config update — set global indicator list ──
-                        if (envelope.type === 'config_update' && envelope.entries) {
-                            const entries = envelope.entries as { name: string; tf: number; color?: string }[];
-                            // Dedup by name:tf
-                            const deduped = [...new Map(entries.map(e => [`${e.name}:${e.tf}`, e])).values()];
-                            setActiveIndicators(deduped);
+                        // Ignore global config_update broadcasts so each tab keeps its own indicators.
+                        if (envelope.type === 'config_update') {
                             continue;
                         }
 

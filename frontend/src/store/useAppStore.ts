@@ -7,20 +7,27 @@ const LEGACY_KEY = 'indicatorProfilesByTF';
 /** Load global indicator list from localStorage */
 function loadPersistedIndicators(): IndicatorEntry[] {
     try {
-        // Try new key first
-        const raw = localStorage.getItem(STORAGE_KEY);
+        // Tab-local persistence: sessionStorage is isolated per browser tab.
+        const raw = sessionStorage.getItem(STORAGE_KEY);
         if (raw) return JSON.parse(raw);
 
-        // Migrate from legacy per-TF format
-        const legacy = localStorage.getItem(LEGACY_KEY);
+        // One-time migration path for older builds that used localStorage.
+        const legacy = localStorage.getItem(STORAGE_KEY);
         if (legacy) {
-            const byTF: Record<number, IndicatorEntry[]> = JSON.parse(legacy);
+            const parsed = JSON.parse(legacy);
+            sessionStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
+            return parsed;
+        }
+
+        // Migrate from legacy per-TF format (stored in localStorage).
+        const legacyByTF = localStorage.getItem(LEGACY_KEY);
+        if (legacyByTF) {
+            const byTF: Record<number, IndicatorEntry[]> = JSON.parse(legacyByTF);
             const flat = Object.values(byTF).flat();
             // Dedup by name:tf
             const deduped = [...new Map(flat.map(e => [`${e.name}:${e.tf}`, e])).values()];
             if (deduped.length > 0) {
-                localStorage.setItem(STORAGE_KEY, JSON.stringify(deduped));
-                localStorage.removeItem(LEGACY_KEY);
+                sessionStorage.setItem(STORAGE_KEY, JSON.stringify(deduped));
                 return deduped;
             }
         }
@@ -31,7 +38,7 @@ function loadPersistedIndicators(): IndicatorEntry[] {
 /** Persist global indicator list to localStorage */
 function persistIndicators(indicators: IndicatorEntry[]) {
     try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(indicators));
+        sessionStorage.setItem(STORAGE_KEY, JSON.stringify(indicators));
     } catch { /* ignore */ }
 }
 

@@ -39,7 +39,7 @@ export function useChartSubscription(
         // Only re-subscribe if something meaningful changed
         if (!tfOrTokenChanged && !entriesChanged) return;
 
-        if (token && activeEntries.length > 0) {
+        if (token) {
             sendSubscribe(token, tf, activeEntries);
         }
     }, [selectedTF, selectedToken, activeEntries]);

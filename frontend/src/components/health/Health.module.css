@@ -191,3 +191,46 @@
     font-weight: 600;
     color: var(--text-secondary);
 }
+
+@media (max-width: 640px) {
+    .section {
+        margin-bottom: 24px;
+    }
+
+    .grid {
+        grid-template-columns: 1fr;
+        gap: 12px;
+    }
+
+    .card {
+        padding: 14px 14px;
+    }
+
+    .ringWrap {
+        gap: 12px;
+    }
+
+    .ringSvg {
+        width: 70px;
+        height: 70px;
+    }
+
+    .ringPercent {
+        font-size: 1.3rem;
+    }
+
+    .delayVal {
+        font-size: 1.8rem;
+    }
+
+    .procVal {
+        font-size: 0.76rem;
+    }
+}
+
+@media (max-width: 380px) {
+    .ringWrap {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+}

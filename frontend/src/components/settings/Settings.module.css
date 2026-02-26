@@ -152,6 +152,7 @@
     display: flex;
     gap: 8px;
     align-items: center;
+    flex-wrap: wrap;
 }
 
 .input {
@@ -269,4 +270,42 @@
 
 .applyBtn:active {
     transform: translateY(0);
+}
+
+@media (max-width: 640px) {
+    .modal {
+        width: calc(100vw - 16px);
+        max-width: calc(100vw - 16px);
+        max-height: 90vh;
+    }
+
+    .header {
+        padding: 14px 14px 12px;
+    }
+
+    .body {
+        padding: 14px;
+    }
+
+    .addRow {
+        gap: 6px;
+    }
+
+    .input {
+        flex: 1 1 110px;
+        width: auto;
+    }
+
+    .footer {
+        padding: 12px 14px 14px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+    }
+
+    .resetBtn,
+    .applyBtn {
+        width: 100%;
+        padding: 9px 12px;
+    }
 }

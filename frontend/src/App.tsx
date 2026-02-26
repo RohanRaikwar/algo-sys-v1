@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useAppStore } from './store/useAppStore';
 import { useWebSocket } from './hooks/useWebSocket';
-import { useConfigQuery, useActiveConfigQuery } from './hooks/useConfigQuery';
+import { useConfigQuery } from './hooks/useConfigQuery';
 import { Header } from './components/layout/Header';
 import { StatusBar } from './components/layout/StatusBar';
 import { ReconnectBanner } from './components/layout/ReconnectBanner';
@@ -10,6 +10,7 @@ import { TradingChart } from './components/chart/TradingChart';
 import { SystemHealth } from './components/health/SystemHealth';
 import { SettingsModal } from './components/settings/SettingsModal';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import styles from './App.module.css';
 
 const queryClient = new QueryClient({
     defaultOptions: { queries: { refetchOnWindowFocus: false } },
@@ -19,7 +20,6 @@ function Dashboard() {
     const setConfig = useAppStore(s => s.setConfig);
     const setSelectedToken = useAppStore(s => s.setSelectedToken);
     const setSelectedTF = useAppStore(s => s.setSelectedTF);
-    const setActiveIndicators = useAppStore(s => s.setActiveIndicators);
     const [settingsOpen, setSettingsOpen] = useState(false);
 
     // Connect WebSocket
@@ -28,9 +28,6 @@ function Dashboard() {
     // Fetch config via React Query
     const { data: cfg, isLoading: cfgLoading, isError: cfgError } = useConfigQuery();
 
-    // Fetch active indicator config (only after config loaded)
-    const { data: activeByTF, isError: activeError } = useActiveConfigQuery(!!cfg);
-
     // Apply config when loaded
     useEffect(() => {
         if (!cfg) return;
@@ -38,26 +35,6 @@ function Dashboard() {
         if (cfg.tokens.length > 0) setSelectedToken(cfg.tokens[0]);
         if (cfg.tfs.length > 0) setSelectedTF(cfg.tfs[0]);
     }, [cfg, setConfig, setSelectedToken, setSelectedTF]);
-
-    // Apply active indicator config — flatten per-TF into global list
-    // No auto-populate: user adds indicators dynamically via Settings
-    useEffect(() => {
-        if (!cfg) return;
-
-        if (activeByTF) {
-            const hasSome = Object.values(activeByTF).some(arr => arr.length > 0);
-            if (hasSome) {
-                // Flatten all TF entries into one global list, dedup by name:tf
-                const flat = Object.values(activeByTF).flat();
-                const deduped = [...new Map(flat.map(e => [`${e.name}:${e.tf}`, e])).values()];
-                // Only apply if user has no local overrides
-                const existing = useAppStore.getState().activeIndicators;
-                if (existing.length === 0) {
-                    setActiveIndicators(deduped);
-                }
-            }
-        }
-    }, [cfg, activeByTF, activeError, setActiveIndicators]);
 
     // Apply defaults on config fetch error
     useEffect(() => {
@@ -83,7 +60,7 @@ function Dashboard() {
         <>
             <ReconnectBanner />
             <Header onOpenSettings={() => setSettingsOpen(true)} />
-            <main style={{ padding: '24px 28px', maxWidth: 1600, margin: '0 auto', paddingBottom: 60 }}>
+            <main className={styles.main}>
                 <ErrorBoundary>
                     <TradingChart />
                 </ErrorBoundary>
@@ -102,4 +79,3 @@ export default function App() {
         </QueryClientProvider>
     );
 }
-

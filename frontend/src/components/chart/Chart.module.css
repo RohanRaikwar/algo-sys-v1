@@ -76,13 +76,14 @@
 
 .chartContainer {
     width: 100%;
-    height: 460px;
+    height: clamp(300px, 56vh, 460px);
 }
 
 .ohlc {
     position: absolute;
     top: 56px;
     left: 16px;
+    right: 16px;
     z-index: 10;
     font-family: var(--mono);
     font-size: 0.75rem;
@@ -109,6 +110,7 @@
     background: rgba(10, 14, 23, 0.8);
     border-radius: 6px;
     border: 1px solid var(--border);
+    flex-shrink: 0;
 }
 
 .ohlcRow {
@@ -144,4 +146,70 @@
     letter-spacing: 0.3px;
     pointer-events: none;
     z-index: 5;
+}
+
+@media (max-width: 900px) {
+    .chartContainer {
+        height: clamp(280px, 50vh, 380px);
+    }
+}
+
+@media (max-width: 640px) {
+    .chartSection {
+        margin-bottom: 24px;
+    }
+
+    .sectionTitle {
+        margin-bottom: 12px;
+    }
+
+    .tfBar {
+        padding: 10px 12px;
+        gap: 6px;
+    }
+
+    .tfPill {
+        padding: 5px 11px;
+        font-size: 0.72rem;
+    }
+
+    .chartContainer {
+        height: 300px;
+    }
+
+    .ohlc {
+        top: 48px;
+        left: 8px;
+        right: 8px;
+        font-size: 0.68rem;
+    }
+
+    .ohlcRow {
+        gap: 8px;
+        padding: 3px 8px;
+        overflow-x: auto;
+        white-space: nowrap;
+    }
+
+    .indRow {
+        gap: 8px;
+        padding: 3px 8px;
+        overflow-x: auto;
+        white-space: nowrap;
+    }
+
+    .legend {
+        top: auto;
+        bottom: 8px;
+        left: 8px;
+        right: 8px;
+        overflow-x: auto;
+        flex-wrap: nowrap;
+        padding-bottom: 2px;
+    }
+
+    .legendItem {
+        font-size: 0.68rem;
+        padding: 2px 6px;
+    }
 }

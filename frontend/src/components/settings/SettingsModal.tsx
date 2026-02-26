@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAppStore } from '../../store/useAppStore';
 import { useCandleStore } from '../../store/useCandleStore';
-import { saveActiveConfig } from '../../services/api';
 import { sendSubscribe } from '../../hooks/useWebSocket';
 import { tfLabel, getIndColor, SMA_PALETTE, EMA_PALETTE, SMMA_PALETTE, getEntryColor, entryKey } from '../../utils/helpers';
 import type { IndicatorEntry } from '../../types/api';
@@ -62,40 +61,28 @@ export function SettingsModal({ open, onClose }: Props) {
 
     const allowedTFs = (config.tfs || [60, 120, 180, 300]).filter((t) => t <= chartTF);
 
-    const handleApply = useCallback(async () => {
-        try {
-            const entries = draft.map((e) => ({ ...e }));
+    const handleApply = useCallback(() => {
+        const entries = draft.map((e) => ({ ...e }));
 
-            // Save to backend (wrap in per-TF format for backward compat)
-            const byTF: Record<number, IndicatorEntry[]> = {};
-            for (const e of entries) {
-                if (!byTF[e.tf]) byTF[e.tf] = [];
-                byTF[e.tf].push(e);
-            }
-            await saveActiveConfig(byTF);
-
-            // Clear removed indicator data from candle store
-            const keepNames = entries.map(e => e.name);
-            // Clear for all TFs that had indicators
-            const allTFs = new Set(entries.map(e => e.tf));
-            for (const tf of allTFs) {
-                useCandleStore.getState().clearIndicatorsForTF(tf, keepNames);
-            }
-
-            setActiveIndicators(entries);
-
-            // Re-subscribe with updated indicator profile via WS
-            const token = useAppStore.getState().selectedToken;
-            const tf = useAppStore.getState().selectedTF;
-            if (token && entries.length > 0) {
-                sendSubscribe(token, tf, entries);
-            }
-
-            onClose();
-        } catch (e) {
-            console.error('[settings] save error:', e);
-            alert('Failed to save settings.');
+        // Clear removed indicator data from candle store
+        const keepNames = entries.map(e => e.name);
+        // Clear for all TFs that had indicators
+        const allTFs = new Set(entries.map(e => e.tf));
+        for (const tf of allTFs) {
+            useCandleStore.getState().clearIndicatorsForTF(tf, keepNames);
         }
+
+        // Persist in tab-local store only
+        setActiveIndicators(entries);
+
+        // Re-subscribe with updated indicator profile via WS for this tab connection
+        const token = useAppStore.getState().selectedToken;
+        const tf = useAppStore.getState().selectedTF;
+        if (token) {
+            sendSubscribe(token, tf, entries);
+        }
+
+        onClose();
     }, [draft, setActiveIndicators, onClose]);
 
     const handleReset = useCallback(() => {
