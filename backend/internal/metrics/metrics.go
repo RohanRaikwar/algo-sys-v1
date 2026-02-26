@@ -55,6 +55,10 @@ type Metrics struct {
 	WatermarkDelay   prometheus.Gauge     // current watermark delay vs wall clock
 	LateTicks        prometheus.Counter   // ticks dropped behind watermark
 	ReorderBufferLen prometheus.Gauge     // current reorder buffer occupancy
+
+	// Market session state (ADR-006)
+	MarketState        prometheus.Gauge       // 0=closed, 1=open
+	SessionTransitions *prometheus.CounterVec // labels: type=open|close|ws_disconnect
 }
 
 // NewMetrics registers and returns all Prometheus metrics.
@@ -173,6 +177,16 @@ func NewMetrics() *Metrics {
 			Name: "mdengine_reorder_buffer_len",
 			Help: "Current number of candle buckets held in the reorder buffer",
 		}),
+
+		// Market session (ADR-006)
+		MarketState: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "mdengine_market_state",
+			Help: "Market session state (0=closed, 1=open)",
+		}),
+		SessionTransitions: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "mdengine_session_transitions_total",
+			Help: "Market session transitions (open, close, ws_disconnect)",
+		}, []string{"type"}),
 	}
 
 	prometheus.MustRegister(
@@ -199,6 +213,8 @@ func NewMetrics() *Metrics {
 		m.WatermarkDelay,
 		m.LateTicks,
 		m.ReorderBufferLen,
+		m.MarketState,
+		m.SessionTransitions,
 	)
 
 	return m

@@ -207,6 +207,14 @@ func (a *Aggregator) flushOld(candleCh chan<- model.Candle) {
 	}
 }
 
+// FlushSession finalizes and emits all in-progress candles.
+// Called at market close to ensure the last candle includes the closing price.
+// Safe to call from any goroutine — uses internal mutex.
+func (a *Aggregator) FlushSession(candleCh chan<- model.Candle) {
+	a.flushAll(candleCh)
+	log.Println("[agg] session flushed — all forming candles finalized")
+}
+
 // flushAll emits all open candles regardless of bucket.
 func (a *Aggregator) flushAll(candleCh chan<- model.Candle) {
 	a.mu.Lock()

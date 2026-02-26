@@ -14,6 +14,10 @@ const (
 	OpenMinute  = 15
 	CloseHour   = 15
 	CloseMinute = 30
+
+	// Pre-market warm-up timing (ADR-006)
+	PreOpenMinutesBefore   = 5 // wake 5 min before open → 9:10 AM for login
+	WSConnectMinutesBefore = 1 // connect WS 1 min before open → 9:14 AM
 )
 
 // IsMarketOpen returns true if t falls within NSE trading hours
@@ -64,6 +68,19 @@ func NextOpen(t time.Time) time.Time {
 	}
 	// Fallback: next day
 	return time.Date(ist.Year(), ist.Month(), ist.Day()+1, OpenHour, OpenMinute, 0, 0, IST)
+}
+
+// NextPreOpen returns the next pre-market warm-up time (9:10 AM on next trading day).
+// This is PreOpenMinutesBefore minutes before market open, used to start login/token generation.
+func NextPreOpen(t time.Time) time.Time {
+	open := NextOpen(t)
+	return open.Add(-time.Duration(PreOpenMinutesBefore) * time.Minute)
+}
+
+// WSConnectTime returns the WS connect time for the given open time.
+// This is WSConnectMinutesBefore minutes before market open (9:14 AM).
+func WSConnectTime(openTime time.Time) time.Time {
+	return openTime.Add(-time.Duration(WSConnectMinutesBefore) * time.Minute)
 }
 
 // TodayClose returns today's market close time (3:30 PM IST).

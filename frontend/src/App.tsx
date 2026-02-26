@@ -1,22 +1,22 @@
 import { useState, useEffect } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { Navigate, Route, Routes } from 'react-router-dom';
 import { useAppStore } from './store/useAppStore';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useConfigQuery } from './hooks/useConfigQuery';
 import { Header } from './components/layout/Header';
 import { StatusBar } from './components/layout/StatusBar';
 import { ReconnectBanner } from './components/layout/ReconnectBanner';
-import { TradingChart } from './components/chart/TradingChart';
-import { SystemHealth } from './components/health/SystemHealth';
 import { SettingsModal } from './components/settings/SettingsModal';
-import { ErrorBoundary } from './components/ErrorBoundary';
+import { DashboardPage } from './pages/DashboardPage';
+import { HealthPage } from './pages/HealthPage';
 import styles from './App.module.css';
 
 const queryClient = new QueryClient({
     defaultOptions: { queries: { refetchOnWindowFocus: false } },
 });
 
-function Dashboard() {
+function AppShell() {
     const setConfig = useAppStore(s => s.setConfig);
     const setSelectedToken = useAppStore(s => s.setSelectedToken);
     const setSelectedTF = useAppStore(s => s.setSelectedTF);
@@ -61,10 +61,11 @@ function Dashboard() {
             <ReconnectBanner />
             <Header onOpenSettings={() => setSettingsOpen(true)} />
             <main className={styles.main}>
-                <ErrorBoundary>
-                    <TradingChart />
-                </ErrorBoundary>
-                <SystemHealth />
+                <Routes>
+                    <Route path="/" element={<DashboardPage />} />
+                    <Route path="/health" element={<HealthPage />} />
+                    <Route path="*" element={<Navigate to="/" replace />} />
+                </Routes>
             </main>
             <StatusBar />
             <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
@@ -75,7 +76,7 @@ function Dashboard() {
 export default function App() {
     return (
         <QueryClientProvider client={queryClient}>
-            <Dashboard />
+            <AppShell />
         </QueryClientProvider>
     );
 }

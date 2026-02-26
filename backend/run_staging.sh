@@ -7,6 +7,17 @@
 
 trap 'kill $(jobs -p) 2>/dev/null; exit 0' SIGINT SIGTERM
 
+# Source env files: base .env first, then .env.staging overrides
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+if [ -f "$REPO_ROOT/.env" ]; then
+    set -a; source "$REPO_ROOT/.env"; set +a
+fi
+if [ -f "$REPO_ROOT/.env.staging" ]; then
+    set -a; source "$REPO_ROOT/.env.staging"; set +a
+fi
+export STAGING_MODE=true
+
 echo "╔═══════════════════════════════════════════════════╗"
 echo "║  STAGING MODE                                    ║"
 echo "║  Services: tickserver + mdengine + indengine     ║"

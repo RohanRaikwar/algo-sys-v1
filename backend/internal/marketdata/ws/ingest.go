@@ -41,6 +41,7 @@ type Ingest struct {
 
 	// Optional metrics hooks
 	OnReconnect func()
+	OnTick      func(price int64) // called with LTP on every tick (for close detection)
 }
 
 // New creates a new Ingest instance.
@@ -84,6 +85,11 @@ func (ing *Ingest) Start(ctx context.Context, tickCh chan<- model.Tick) error {
 		if err != nil {
 			log.Printf("[ws] parse error: %v", err)
 			return
+		}
+
+		// Notify close detector (price observation for market close detection)
+		if ing.OnTick != nil {
+			ing.OnTick(tick.Price)
 		}
 
 		select {

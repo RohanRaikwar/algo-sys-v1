@@ -1,6 +1,20 @@
 package markethours
 
-import "time"
+import (
+	"log"
+	"time"
+)
+
+// holidayYear is the year the holiday list covers.
+const holidayYear = 2026
+
+// CheckHolidayStaleness logs a warning if the current year differs from
+// the hardcoded holiday list year. Call at startup.
+func CheckHolidayStaleness() {
+	if y := time.Now().In(IST).Year(); y != holidayYear {
+		log.Printf("[markethours] ⚠️  WARNING: holiday list is for %d but current year is %d — update holidays.go!", holidayYear, y)
+	}
+}
 
 // NSE holidays for 2026.
 // Source: NSE India official holiday list.

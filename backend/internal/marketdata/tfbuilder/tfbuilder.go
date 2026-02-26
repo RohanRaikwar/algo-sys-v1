@@ -189,6 +189,13 @@ func (b *Builder) process(c model.Candle, outCh chan<- model.TFCandle) {
 	}
 }
 
+// FlushSession finalizes and emits all forming TF candles.
+// Called at market close to ensure last candles include the closing price.
+func (b *Builder) FlushSession(outCh chan<- model.TFCandle) {
+	b.flushAll(outCh)
+	log.Println("[tfbuilder] session flushed — all forming TF candles finalized")
+}
+
 // flushAll finalizes and emits all forming candles.
 func (b *Builder) flushAll(outCh chan<- model.TFCandle) {
 	for i := range b.tfs {

@@ -16,6 +16,7 @@ import (
 	"trading-systemv1/config"
 	"trading-systemv1/internal/marketdata/agg"
 	"trading-systemv1/internal/marketdata/bus"
+	"trading-systemv1/internal/marketdata/closedetector"
 	"trading-systemv1/internal/marketdata/tfbuilder"
 	"trading-systemv1/internal/marketdata/ws"
 	"trading-systemv1/internal/marketdata/wssim"
@@ -30,6 +31,9 @@ import (
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds | log.Lshortfile)
 	log.Println("[mdengine] starting...")
+
+	// ---- Holiday staleness check (ADR-006) ----
+	markethours.CheckHolidayStaleness()
 
 	// ---- Staging mode check ----
 	stagingMode := strings.EqualFold(os.Getenv("STAGING_MODE"), "true")
@@ -273,16 +277,22 @@ func main() {
 	} else {
 		// ---- PRODUCTION: Angel One WS with market hours gating ----
 		go func() {
+			loginBackoff := 30 * time.Second // exponential: 30s → 60s → 120s → 300s
+
 			for {
-				// --- Wait for market open ---
+				// --- Wait for pre-market warm-up time (9:10 AM) ---
 				now := time.Now()
-				if !markethours.IsMarketOpen(now) {
-					next := markethours.NextOpen(now)
-					wait := next.Sub(now)
+				nextPreOpen := markethours.NextPreOpen(now)
+				nextOpen := markethours.NextOpen(now)
+
+				// If we're past pre-open but before market close, skip the wait
+				if now.Before(nextPreOpen) {
+					wait := nextPreOpen.Sub(now)
 					log.Printf("[mdengine] ⏸ market closed. %s", markethours.StatusString(now))
-					log.Printf("[mdengine] sleeping %v until next open %s",
-						wait.Truncate(time.Second), next.In(markethours.IST).Format("Mon 15:04"))
+					log.Printf("[mdengine] sleeping %v until pre-open %s",
+						wait.Truncate(time.Second), nextPreOpen.In(markethours.IST).Format("Mon 15:04"))
 					health.SetWSConnected(false)
+					prom.MarketState.Set(0)
 
 					select {
 					case <-ctx.Done():
@@ -291,12 +301,15 @@ func main() {
 					}
 				}
 
-				// --- Fresh login (new TOTP + session) ---
-				log.Println("[mdengine] 🔑 market open — generating fresh session...")
+				// --- Fresh login at ~9:10 AM (pre-market) ---
+				log.Println("[mdengine] 🔑 pre-market warm-up — generating fresh session...")
+				prom.SessionTransitions.WithLabelValues("open").Inc()
+
 				totpCode, err := totp.GenerateCode(cfg.AngelTOTPSecret, time.Now())
 				if err != nil {
-					log.Printf("[mdengine] TOTP generation failed: %v, retrying in 30s", err)
-					time.Sleep(30 * time.Second)
+					log.Printf("[mdengine] TOTP generation failed: %v, retrying in %v", err, loginBackoff)
+					time.Sleep(loginBackoff)
+					loginBackoff = minDur(loginBackoff*2, 5*time.Minute)
 					continue
 				}
 
@@ -306,8 +319,9 @@ func main() {
 				})
 				userResp, err := sc.GenerateSession(cfg.AngelClientCode, cfg.AngelPassword, totpCode)
 				if err != nil {
-					log.Printf("[mdengine] login failed: %v, retrying in 30s", err)
-					time.Sleep(30 * time.Second)
+					log.Printf("[mdengine] login failed: %v, retrying in %v", err, loginBackoff)
+					time.Sleep(loginBackoff)
+					loginBackoff = minDur(loginBackoff*2, 5*time.Minute)
 					continue
 				}
 
@@ -319,15 +333,32 @@ func main() {
 					}
 				}
 				if feedToken == "" || authToken == "" {
-					log.Printf("[mdengine] empty tokens from session, retrying in 30s")
-					time.Sleep(30 * time.Second)
+					log.Printf("[mdengine] empty tokens from session, retrying in %v", loginBackoff)
+					time.Sleep(loginBackoff)
+					loginBackoff = minDur(loginBackoff*2, 5*time.Minute)
 					continue
 				}
+				loginBackoff = 30 * time.Second // reset on success
 				log.Printf("[mdengine] ✅ session ready, feedToken=%s...", feedToken[:min(10, len(feedToken))])
 
-				// --- Connect WS with a deadline at market close ---
+				// --- Wait until WS connect time (9:14 AM) ---
+				wsTime := markethours.WSConnectTime(nextOpen)
+				if wait := wsTime.Sub(time.Now()); wait > 0 {
+					log.Printf("[mdengine] ⏳ waiting %v to connect WS at %s",
+						wait.Truncate(time.Second), wsTime.In(markethours.IST).Format("15:04"))
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(wait):
+					}
+				}
+
+				// --- Connect WS with close detection (smart close at ~15:30+) ---
 				closeTime := markethours.TodayClose(time.Now())
-				wsCtx, wsCancel := context.WithDeadline(ctx, closeTime)
+				detector := closedetector.New(closeTime)
+				// Hard deadline = closeTime + MaxGrace (safety net)
+				wsDeadline := closeTime.Add(detector.MaxGrace)
+				wsCtx, wsCancel := context.WithDeadline(ctx, wsDeadline)
 
 				ingest, err := ws.New(ws.IngestConfig{
 					AuthToken:     authToken,
@@ -348,23 +379,47 @@ func main() {
 					prom.WSReconnects.Inc()
 				}
 
-				health.SetWSConnected(true)
-				log.Printf("[mdengine] 📡 WS connected — will disconnect at %s",
-					closeTime.In(markethours.IST).Format("15:04:05"))
+				// Close detection callback: observe each tick after 15:30
+				ingest.OnTick = func(price int64) {
+					if detector.Observe(price, time.Now()) {
+						wsCancel() // price stabilized → disconnect
+					}
+				}
 
-				// This blocks until wsCtx deadline (3:30 PM) or parent ctx cancelled
+				health.SetWSConnected(true)
+				prom.MarketState.Set(1)
+				if redisWriter != nil {
+					redisWriter.PublishMarketState("open")
+				}
+				log.Printf("[mdengine] 📡 WS connected — smart close after %s (hard max %s)",
+					closeTime.In(markethours.IST).Format("15:04:05"),
+					wsDeadline.In(markethours.IST).Format("15:04:05"))
+
+				// This blocks until close detection triggers wsCancel or hard deadline
 				if err := ingest.Start(wsCtx, tickCh); err != nil {
 					log.Printf("[mdengine] ws session ended: %v", err)
 				}
 				wsCancel()
+
+				// --- Market close: flush + cleanup ---
 				health.SetWSConnected(false)
-				log.Println("[mdengine] 🔌 WS disconnected — market close")
+				prom.MarketState.Set(0)
+				prom.SessionTransitions.WithLabelValues("close").Inc()
+				if redisWriter != nil {
+					redisWriter.PublishMarketState("closed")
+				}
+
+				// Finalize all in-progress candles (ADR-006 Contract #3)
+				aggregator.FlushSession(candleCh)
+				tfBuilder.FlushSession(tfCandleCh)
+
+				log.Printf("[mdengine] 🔌 WS disconnected — closing price: %d", detector.ClosingPrice())
 
 				// Check if parent ctx was cancelled (shutdown signal)
 				if ctx.Err() != nil {
 					return
 				}
-				// Loop back to wait for next market open
+				// Loop back to wait for next pre-open
 			}
 		}()
 
@@ -372,9 +427,9 @@ func main() {
 		log.Println("[mdengine] ║  Market Data Engine (MS1) — Production Mode                  ║")
 		log.Println("[mdengine] ║                                                              ║")
 		log.Println("[mdengine] ║  Pipeline (24/7): [Agg] → [TF Builder] → [Redis/SQLite]      ║")
-		log.Println("[mdengine] ║  WS Feed (market hours): 9:15 AM – 3:30 PM IST, Mon–Fri      ║")
+		log.Println("[mdengine] ║  Pre-open: 9:10 login → 9:14 WS connect → 9:15 first tick    ║")
+		log.Println("[mdengine] ║  Smart close: price stabilization after 15:30 (max +5min)    ║")
 		log.Printf("[mdengine] ║  TFs: %v                              ║", enabledTFs)
-		log.Println("[mdengine] ║  Fresh login + tokens at each market open                    ║")
 		log.Println("[mdengine] ╚═══════════════════════════════════════════════════════════════╝")
 		log.Printf("[mdengine] %s", markethours.StatusString(time.Now()))
 	}
@@ -385,7 +440,7 @@ func main() {
 	cancel()
 
 	// Give goroutines time to flush buffers
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*1e9)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 	metricsSrv.Stop(shutdownCtx)
 
@@ -448,6 +503,13 @@ func getEnv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func minDur(a, b time.Duration) time.Duration {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // parseTFsFromEnv parses comma-separated TF seconds for staging mode.

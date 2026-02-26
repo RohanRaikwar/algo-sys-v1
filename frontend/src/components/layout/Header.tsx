@@ -1,4 +1,5 @@
 import { Settings } from 'lucide-react';
+import { NavLink } from 'react-router-dom';
 import { useAppStore } from '../../store/useAppStore';
 import { useWSStore } from '../../store/useWSStore';
 import { tfLabel } from '../../utils/helpers';
@@ -23,6 +24,21 @@ export function Header({ onOpenSettings }: Props) {
             <div className={styles.headerLeft}>
                 <span className={styles.logo}>⚡ TradingPulse</span>
                 <span className={styles.logoSub}>Real-Time Indicators</span>
+                <nav className={styles.nav} aria-label="Primary">
+                    <NavLink
+                        to="/"
+                        end
+                        className={({ isActive }) => `${styles.navLink}${isActive ? ` ${styles.navLinkActive}` : ''}`}
+                    >
+                        Dashboard
+                    </NavLink>
+                    <NavLink
+                        to="/health"
+                        className={({ isActive }) => `${styles.navLink}${isActive ? ` ${styles.navLinkActive}` : ''}`}
+                    >
+                        Health
+                    </NavLink>
+                </nav>
             </div>
             <div className={styles.headerRight}>
                 <select

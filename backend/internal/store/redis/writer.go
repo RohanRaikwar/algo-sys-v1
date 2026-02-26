@@ -327,6 +327,23 @@ func (w *Writer) writeIndicator(ctx context.Context, ind model.IndicatorResult) 
 	}
 }
 
+// PublishMarketState sets the market state key in Redis and publishes a notification.
+// state should be "open" or "closed". Downstream services use this to distinguish
+// expected idle from pipeline failure (ADR-006).
+func (w *Writer) PublishMarketState(state string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	pipe := w.client.Pipeline()
+	pipe.Set(ctx, "market:state", state, 24*time.Hour)
+	pipe.Publish(ctx, "pub:market:state", state)
+	if _, err := pipe.Exec(ctx); err != nil {
+		log.Printf("[redis] failed to publish market state %q: %v", state, err)
+	} else {
+		log.Printf("[redis] market state → %s", state)
+	}
+}
+
 // Close closes the Redis client.
 func (w *Writer) Close() error {
 	return w.client.Close()

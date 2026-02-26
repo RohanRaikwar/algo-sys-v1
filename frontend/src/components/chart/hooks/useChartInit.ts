@@ -24,8 +24,11 @@ export function useChartInit(): ChartRefs {
 
     useEffect(() => {
         if (!chartContainer.current) return;
+        const el = chartContainer.current;
+        const initialWidth = Math.max(el.clientWidth, 1);
+        const initialHeight = Math.max(el.clientHeight, 300);
 
-        const chart = createChart(chartContainer.current, {
+        const chart = createChart(el, {
             layout: {
                 background: { type: ColorType.Solid, color: '#0f172a' },
                 textColor: '#9ca3af',
@@ -59,8 +62,8 @@ export function useChartInit(): ChartRefs {
                 axisPressedMouseMove: { price: true, time: true },
                 axisDoubleClickReset: { price: true, time: true },
             },
-            width: chartContainer.current.clientWidth,
-            height: 460,
+            width: initialWidth,
+            height: initialHeight,
         });
 
         chartApi.current = chart;
@@ -71,9 +74,11 @@ export function useChartInit(): ChartRefs {
         });
 
         // Resize observer
-        const el = chartContainer.current;
         const ro = new ResizeObserver(() => {
-            if (el) chart.applyOptions({ width: el.clientWidth });
+            chart.applyOptions({
+                width: Math.max(el.clientWidth, 1),
+                height: Math.max(el.clientHeight, 300),
+            });
         });
         ro.observe(el);
 
